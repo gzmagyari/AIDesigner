@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mini Stitch – AI Design Canvas (Vue2 + OpenAI)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: #0f172a;
+        --panel-2: #0b1220;
+        --border: #1f2937;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --accent: #60a5fa;
+        --white: #ffffff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+          Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        height: 100vh;
+      }
+      .left {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .toolbar {
+        padding: 12px;
+        border-bottom: 1px solid var(--border);
+        display: grid;
+        gap: 8px;
+      }
+      .toolbar .row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .toolbar input,
+      .toolbar select,
+      .toolbar textarea {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0b1220;
+        color: var(--text);
+        outline: none;
+      }
+      .toolbar small {
+        color: var(--muted);
+        display: block;
+      }
+      .toolbar .buttons {
+        display: flex;
+        gap: 8px;
+      }
+      .btn {
+        background: #111827;
+        color: var(--text);
+        border: 1px solid var(--border);
+        padding: 8px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .btn.primary {
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+      }
+      .btn.ghost {
+        background: transparent;
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .chat {
+        overflow: auto;
+        padding: 12px;
+      }
+      .bubble {
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        margin-bottom: 10px;
+        background: #0b1220;
+        white-space: pre-wrap;
+      }
+      .bubble.assistant {
+        background: #0f172a;
+      }
+      .bubble.tool {
+        background: #0a1717;
+        color: #9fe8e0;
+      }
+      .role {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .input {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .input input {
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #0b1220;
+        color: var(--text);
+      }
+      .right {
+        position: relative;
+        background: radial-gradient(
+          1200px 600px at 30% -10%,
+          rgba(96, 165, 250, 0.15),
+          transparent 60%
+        );
+      }
+      .canvas {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        padding: 24px;
+      }
+      .box {
+        position: absolute;
+        background: #0b1220;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+        user-select: none;
+      }
+      .box-toolbar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 10px;
+        background: #0f172a;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .box-toolbar .title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .box-toolbar .actions button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 4px 6px;
+        margin-left: 6px;
+        cursor: pointer;
+      }
+      .box-toolbar .actions button:hover {
+        border-color: #2b3647;
+      }
+      .box-content {
+        position: absolute;
+        inset: 34px 0 0 0;
+        background: #0b1220;
+      }
+      .box.preview {
+        border-style: dashed;
+      }
+      .empty {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
+        font-size: 14px;
+        text-align: center;
+        padding: 20px;
+      }
+      .hint {
+        color: #9ca3af;
+        font-size: 12px;
+      }
+      .pill {
+        padding: 2px 8px;
+        border-radius: 99px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+    </style>
+
+    <!-- CDN libs -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+  </head>
+  <body>
+    <div id="app" class="app" v-cloak>
+      <!-- LEFT: Controls & Chat -->
+      <section class="left">
+        <div class="toolbar">
+          <div class="row">
+            <label>
+              <small>OpenAI API key (stored locally, dev only)</small>
+              <input
+                v-model.trim="apiKey"
+                @change="persistApiKey"
+                placeholder="sk-..."
+              />
+            </label>
+            <label>
+              <small>Model (supports tool calls + streaming)</small>
+              <input v-model.trim="model" list="model-suggestions" />
+              <datalist id="model-suggestions">
+                <option>gpt-4o-mini</option>
+                <option>gpt-4o</option>
+                <option>gpt-4.1-mini</option>
+              </datalist>
+            </label>
+            <label>
+              <small>Renderer</small>
+              <select v-model="renderModeDefault">
+                <option value="shadow">Shadow DOM (recommended)</option>
+                <option value="iframe">Sandboxed iframe (fallback)</option>
+              </select>
+            </label>
+          </div>
+          <div class="buttons">
+            <button class="btn ghost" @click="newCanvas()">New canvas</button>
+            <button class="btn ghost" @click="listDesignsToChat()">
+              List designs
+            </button>
+            <span class="pill" title="Autosave">Autosave On</span>
+          </div>
+          <small class="hint"
+            >Tip: Ask “Create a hero section card with a headline + CTA”. Then
+            try “Replace ‘Get Started’ with ‘Try it free’ in Hero”.</small
+          >
+        </div>
+
+        <div class="chat" ref="chatScroll">
+          <div
+            v-for="msg in messages"
+            :key="msg._id"
+            class="bubble"
+            :class="msg.role"
+          >
+            <div class="role">
+              {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
+            </div>
+            <div>{{ msg.content }}</div>
+          </div>
+          <div v-if="assistantStreamingText" class="bubble assistant">
+            <div class="role">assistant · streaming</div>
+            <div>{{ assistantStreamingText }}</div>
+          </div>
+        </div>
+
+        <div class="input">
+          <input
+            v-model="userInput"
+            :disabled="isStreaming"
+            @keydown.enter="send"
+            placeholder="Describe a design or an edit…"
+          />
+          <div style="display: flex; gap: 8px">
+            <button class="btn" @click="stop" :disabled="!isStreaming">
+              Stop
+            </button>
+            <button
+              class="btn primary"
+              @click="send"
+              :disabled="!apiKey || !userInput || isStreaming"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT: Canvas -->
+      <section class="right">
+        <div class="canvas" ref="canvas">
+          <div class="empty" v-if="!designs.length">
+            <div>
+              <div style="font-weight: 600; margin-bottom: 6px">
+                No designs yet
+              </div>
+              <div class="hint">
+                Describe a design in the chat to generate the first box.
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-for="d in designs"
+            :key="d.id"
+            class="box"
+            :class="{preview: d.isPreview}"
+            :style="{left:d.x+'px', top:d.y+'px', width:d.width+'px', height:d.height+'px', zIndex:d.z}"
+            :data-id="d.id"
+            @mousedown="bringToFront(d.id)"
+          >
+            <div class="box-toolbar">
+              <span class="title" @dblclick="renameDesign(d.id)"
+                >{{ d.name || d.id }}</span
+              >
+              <span class="actions">
+                <button title="Duplicate" @click.stop="duplicateDesign(d.id)">
+                  ⧉
+                </button>
+                <button title="Export HTML" @click.stop="exportHtml(d.id)">
+                  ⤓
+                </button>
+                <button title="Delete" @click.stop="removeDesign(d.id)">
+                  ✕
+                </button>
+              </span>
+            </div>
+            <div class="box-content" :ref="'box-' + d.id"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        const TOOLS_SPEC = [
+          {
+            type: "function",
+            function: {
+              name: "create_design",
+              description: "Create a new design box and render the given HTML.",
+              parameters: {
+                type: "object",
+                properties: {
+                  name: {
+                    type: "string",
+                    description: "Short label for the design."
+                  },
+                  html: {
+                    type: "string",
+                    description:
+                      "Self-contained HTML fragment (no external deps). Avoid <script> unless explicitly requested."
+                  },
+                  width: { type: "number", default: 480 },
+                  height: { type: "number", default: 360 },
+                  x: { type: "number", default: 40 },
+                  y: { type: "number", default: 40 },
+                  renderMode: {
+                    type: "string",
+                    enum: ["shadow", "iframe"],
+                    description:
+                      "Optional override of render mode for this box."
+                  }
+                },
+                required: ["html"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "edit_design",
+              description:
+                "Modify an existing design by providing a new full HTML or a patch instruction.",
+              parameters: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  new_html: {
+                    type: "string",
+                    description:
+                      "If provided, replace the entire HTML of the design."
+                  },
+                  instruction: {
+                    type: "string",
+                    description:
+                      "If new_html is not provided, a short instruction. Prefer using replace_string for surgical edits."
+                  }
+                },
+                required: ["id"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "replace_string",
+              description:
+                "Surgical edit: replace a substring in the HTML of a design.",
+              parameters: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  old: { type: "string" },
+                  new: { type: "string" },
+                  occurrences: {
+                    type: "string",
+                    enum: ["first", "all"],
+                    default: "all"
+                  }
+                },
+                required: ["id", "old", "new"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "list_designs",
+              description: "List current designs to disambiguate IDs/names.",
+              parameters: { type: "object", properties: {} }
+            }
+          }
+        ];
+
+        const SYSTEM_PROMPT = `
+You are an assistant that generates and edits UI designs as HTML fragments.
+- ALWAYS use the provided tools to create or modify designs.
+- For small textual or class/style changes, prefer the "replace_string" tool.
+- When unsure which design box to target, call "list_designs" first, then reference by id.
+- Generated HTML must be self-contained, semantic, and include a <style> block if styling is needed.
+- Avoid <script> tags unless the user explicitly asks for interactivity that demands it.
+- IMPORTANT: For best UX, when creating a new design:
+  1) First stream a fenced code block with the HTML: \`\`\`html ... \`\`\`
+  2) THEN call create_design with the final HTML (and a good name).
+- When editing, if possible stream an \`\`\`html\`\`\` preview of the changed section before the tool call.
+`.trim();
+
+        // Utilities
+        const uid = () => Math.random().toString(36).slice(2, 10);
+        const debounce = (fn, ms = 300) => {
+          let t;
+          return (...a) => {
+            clearTimeout(t);
+            t = setTimeout(() => fn(...a), ms);
+          };
+        };
+        const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        // Vue app
+        new Vue({
+          el: "#app",
+          data: () => ({
+            apiKey: localStorage.getItem("mini-stitch:apiKey") || "",
+            model: localStorage.getItem("mini-stitch:model") || "gpt-4o-mini",
+            renderModeDefault:
+              localStorage.getItem("mini-stitch:renderModeDefault") || "shadow",
+            isStreaming: false,
+            userInput: "",
+            assistantStreamingText: "",
+            messages: [],
+            designs: [],
+            _interactInit: {}, // id -> true
+            _abortController: null,
+            _streamLoopGuard: 0, // to prevent orphan loops
+            // live preview state (via ```html code fences or partial tool args)
+            previewBoxId: "__preview__"
+          }),
+          created() {
+            // initial system prompt & restore state
+            this.ensureSystemPrompt();
+            this.restoreState();
+          },
+          mounted() {
+            this.$watch(
+              "designs",
+              () => this.$nextTick(this.attachInteractions),
+              { deep: true }
+            );
+          },
+          methods: {
+            ensureSystemPrompt() {
+              if (!this.messages.length || this.messages[0].role !== "system") {
+                this.messages.unshift({
+                  _id: uid(),
+                  role: "system",
+                  content: SYSTEM_PROMPT
+                });
+              }
+            },
+            persistApiKey() {
+              localStorage.setItem("mini-stitch:apiKey", this.apiKey || "");
+            },
+            persistModel() {
+              localStorage.setItem("mini-stitch:model", this.model || "");
+            },
+            persistRenderModeDefault() {
+              localStorage.setItem(
+                "mini-stitch:renderModeDefault",
+                this.renderModeDefault || "shadow"
+              );
+            },
+            async restoreState() {
+              try {
+                const saved = await localforage.getItem("mini-stitch:state");
+                if (saved) {
+                  if (saved.messages?.length) this.messages = saved.messages;
+                  if (saved.designs?.length) {
+                    this.designs = saved.designs;
+                    this.$nextTick(() =>
+                      this.designs.forEach(d => this.renderDesign(d))
+                    );
+                  }
+                }
+              } catch (e) {
+                console.warn("restore failed", e);
+              }
+            },
+            saveState: debounce(async function () {
+              try {
+                await localforage.setItem("mini-stitch:state", {
+                  messages: this.messages.filter(
+                    m => m.role !== "system" || m.content === SYSTEM_PROMPT
+                  ),
+                  designs: this.designs
+                });
+              } catch (e) {
+                console.warn("save failed", e);
+              }
+            }, 500),
+
+            // ===== Canvas helpers =====
+            bringToFront(id) {
+              const top = Math.max(0, ...this.designs.map(d => d.z || 0)) + 1;
+              const d = this.getDesign(id);
+              if (!d) return;
+              Vue.set(d, "z", top);
+              this.saveState();
+            },
+            renameDesign(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              const name = prompt("New name for design:", d.name || "");
+              if (name !== null) {
+                d.name = name.trim();
+                this.saveState();
+              }
+            },
+            duplicateDesign(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              const copy = JSON.parse(JSON.stringify(d));
+              copy.id = uid();
+              copy.name = (d.name || d.id) + " copy";
+              copy.x += 20;
+              copy.y += 20;
+              copy.z = Math.max(...this.designs.map(x => x.z || 0)) + 1;
+              copy.isPreview = false;
+              this.designs.push(copy);
+              this.$nextTick(() => this.renderDesign(copy));
+              this.saveState();
+            },
+            removeDesign(id) {
+              const idx = this.designs.findIndex(d => d.id === id);
+              if (idx >= 0) this.designs.splice(idx, 1);
+              this.saveState();
+            },
+            getDesign(id) {
+              return this.designs.find(d => d.id === id);
+            },
+            listDesignsToChat() {
+              const list = this.designs.map(d => ({
+                id: d.id,
+                name: d.name,
+                size: { w: d.width, h: d.height },
+                position: { x: d.x, y: d.y },
+                updatedAt: d.updatedAt || d.createdAt
+              }));
+              this.messages.push({
+                _id: uid(),
+                role: "tool",
+                name: "list_designs",
+                content: JSON.stringify(list, null, 2)
+              });
+              this.saveState();
+            },
+
+            // ===== Rendering & isolation =====
+            sanitize(html) {
+              return DOMPurify.sanitize(html, {
+                USE_PROFILES: { html: true },
+                FORBID_TAGS: ["script", "iframe", "object", "embed", "link"]
+                // DOMPurify by default strips event handlers (on*) and JS URLs.
+              });
+            },
+            renderDesign(design) {
+              const host = this.$refs["box-" + design.id];
+              const el = Array.isArray(host) ? host[0] : host;
+              if (!el) return;
+
+              const sanitized = this.sanitize(design.html || "<div></div>");
+
+              // Choose renderer
+              const mode =
+                design.renderMode || this.renderModeDefault || "shadow";
+              if (mode === "iframe") {
+                // sandboxed iframe (we control only from parent)
+                el.innerHTML = "";
+                const ifr = document.createElement("iframe");
+                ifr.setAttribute("sandbox", "allow-scripts");
+                ifr.style.border = "0";
+                ifr.style.width = "100%";
+                ifr.style.height = "100%";
+                // Ensure dark-ish background inside
+                const html = `
+<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{height:100%;margin:0;background:#0b1220;color:#e5e7eb}</style>
+</head><body>${sanitized}</body></html>`;
+                ifr.srcdoc = html;
+                el.appendChild(ifr);
+                design._renderer = { mode: "iframe", node: ifr };
+                return;
+              }
+
+              // Shadow DOM (open so we can update it)
+              if (!el.shadowRoot) el.attachShadow({ mode: "open" });
+              el.shadowRoot.innerHTML = sanitized;
+              design._renderer = { mode: "shadow", node: el.shadowRoot };
+            },
+            ensurePreviewBox() {
+              let d = this.getDesign(this.previewBoxId);
+              if (!d) {
+                const cx = 100,
+                  cy = 80;
+                d = {
+                  id: this.previewBoxId,
+                  name: "Preview",
+                  isPreview: true,
+                  html: '<div style="padding:16px;font:14px system-ui;color:#94a3b8">Generating preview…</div>',
+                  x: cx,
+                  y: cy,
+                  width: 560,
+                  height: 420,
+                  z: Math.max(0, ...this.designs.map(x => x.z || 0)) + 1,
+                  createdAt: Date.now(),
+                  updatedAt: Date.now(),
+                  renderMode: this.renderModeDefault
+                };
+                this.designs.push(d);
+                this.$nextTick(() => this.renderDesign(d));
+              }
+              return d;
+            },
+            updatePreviewHtml(html) {
+              const d = this.ensurePreviewBox();
+              d.html = html;
+              d.updatedAt = Date.now();
+              this.$nextTick(() => this.renderDesign(d));
+            },
+            clearPreview() {
+              const idx = this.designs.findIndex(
+                d => d.id === this.previewBoxId
+              );
+              if (idx >= 0) this.designs.splice(idx, 1);
+            },
+
+            // ===== Interactions =====
+            attachInteractions() {
+              // attach interact.js to each box once
+              this.designs.forEach(d => {
+                if (this._interactInit[d.id]) return;
+                this._interactInit[d.id] = true;
+
+                const selector = `.box[data-id="${d.id}"]`;
+                interact(selector)
+                  .draggable({
+                    listeners: {
+                      move: event => {
+                        const id = event.target.dataset.id;
+                        const dd = this.getDesign(id);
+                        if (!dd) return;
+                        dd.x += event.dx;
+                        dd.y += event.dy;
+                        event.target.style.left = dd.x + "px";
+                        event.target.style.top = dd.y + "px";
+                      },
+                      end: () => this.saveState()
+                    },
+                    inertia: false
+                  })
+                  .resizable({
+                    edges: { left: true, right: true, bottom: true, top: true },
+                    listeners: {
+                      move: event => {
+                        const id = event.target.dataset.id;
+                        const dd = this.getDesign(id);
+                        if (!dd) return;
+                        dd.width = event.rect.width;
+                        dd.height = event.rect.height;
+                        dd.x += event.deltaRect.left;
+                        dd.y += event.deltaRect.top;
+                        const style = event.target.style;
+                        style.width = dd.width + "px";
+                        style.height = dd.height + "px";
+                        style.left = dd.x + "px";
+                        style.top = dd.y + "px";
+                      },
+                      end: () => this.saveState()
+                    }
+                  });
+              });
+            },
+
+            // ===== OpenAI chat orchestration =====
+            async send() {
+              if (!this.apiKey) {
+                alert("Provide an OpenAI API key first.");
+                return;
+              }
+              const text = this.userInput.trim();
+              if (!text) return;
+
+              this.ensureSystemPrompt();
+              this.messages.push({ _id: uid(), role: "user", content: text });
+              this.userInput = "";
+              this.saveState();
+
+              try {
+                this.isStreaming = true;
+                await this.chatLoop();
+              } catch (e) {
+                console.error(e);
+                alert("Request failed. See console for details.");
+              } finally {
+                this.isStreaming = false;
+                this.assistantStreamingText = "";
+                this.clearPreview(); // remove any orphan preview when done
+                this.saveState();
+              }
+            },
+            stop() {
+              if (this._abortController) this._abortController.abort();
+            },
+
+            async chatLoop() {
+              // Continue streaming/acting until the assistant stops calling tools
+              let continueLoop = true;
+              let loopGuard = ++this._streamLoopGuard;
+
+              while (continueLoop && loopGuard === this._streamLoopGuard) {
+                const result = await this.streamOnce();
+                if (result.toolCalls && result.toolCalls.length) {
+                  // execute each tool call and append tool results
+                  for (const call of result.toolCalls) {
+                    const toolResult = await this.executeToolCall(
+                      call.name,
+                      call.args,
+                      call.id
+                    );
+                    this.messages.push({
+                      _id: uid(),
+                      role: "tool",
+                      name: call.name,
+                      tool_call_id: call.id,
+                      content: JSON.stringify(toolResult)
+                    });
+                    this.saveState();
+                  }
+                  // loop will continue to allow the model to respond to tool results
+                  continueLoop = true;
+                } else {
+                  continueLoop = false;
+                }
+              }
+            },
+
+            async streamOnce() {
+              this.assistantStreamingText = "";
+              const toolBuffers = {}; // id -> { name, argsText }
+              const toolCalls = [];
+              let assistantMessagePushed = false;
+              let assistantMessage = {
+                _id: uid(),
+                role: "assistant",
+                content: ""
+              };
+
+              // Prepare request
+              const url = "https://api.openai.com/v1/chat/completions";
+              const headers = {
+                "Content-Type": "application/json",
+                Authorization: "Bearer " + this.apiKey
+              };
+
+              const body = JSON.stringify({
+                model: this.model,
+                stream: true,
+                messages: this.messages.map(
+                  ({ role, content, name, tool_call_id }) => ({
+                    role,
+                    content,
+                    name,
+                    tool_call_id
+                  })
+                ),
+                tools: TOOLS_SPEC,
+                temperature: 0.4
+              });
+
+              const controller = new AbortController();
+              this._abortController = controller;
+
+              const res = await fetch(url, {
+                method: "POST",
+                headers,
+                body,
+                signal: controller.signal
+              });
+              if (!res.ok || !res.body) {
+                const err = await res.text().catch(() => String(res.status));
+                throw new Error("OpenAI error: " + err);
+              }
+
+              const reader = res.body.getReader();
+              const decoder = new TextDecoder();
+
+              // SSE line buffer
+              let buffer = "";
+
+              const pushAssistantIfNeeded = () => {
+                if (
+                  !assistantMessagePushed &&
+                  assistantMessage.content.trim()
+                ) {
+                  this.messages.push(assistantMessage);
+                  assistantMessagePushed = true;
+                  this.saveState();
+                  // keep streaming text separate (for live view) but also keep final message
+                }
+              };
+
+              // Helper: try preview from current assistantStreamingText code fence
+              const refreshPreviewFromContent = () => {
+                const html = this.extractOpenHtmlCodeBlock(
+                  this.assistantStreamingText
+                );
+                if (html !== null) {
+                  this.updatePreviewHtml(html);
+                }
+              };
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                // split into SSE events
+                const lines = buffer.split("\n");
+                buffer = lines.pop(); // keep tail (possibly incomplete)
+
+                for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (!trimmed.startsWith("data:")) continue;
+                  const data = trimmed.slice(5).trim();
+                  if (data === "[DONE]") continue;
+
+                  let evt;
+                  try {
+                    evt = JSON.parse(data);
+                  } catch {
+                    continue;
+                  }
+                  const choice = evt.choices && evt.choices[0];
+                  if (!choice) continue;
+
+                  const delta = choice.delta || {};
+                  const finish = choice.finish_reason;
+
+                  // Text content delta
+                  if (delta.content) {
+                    assistantMessage.content += delta.content;
+                    this.assistantStreamingText += delta.content;
+                    refreshPreviewFromContent();
+                    this.scrollChatToEndSoon();
+                  }
+
+                  // Tool call deltas
+                  if (Array.isArray(delta.tool_calls)) {
+                    for (const t of delta.tool_calls) {
+                      if (!toolBuffers[t.id]) {
+                        toolBuffers[t.id] = {
+                          name: t.function?.name || "",
+                          argsText: ""
+                        };
+                      }
+                      if (t.function?.name)
+                        toolBuffers[t.id].name = t.function.name;
+                      if (t.function?.arguments) {
+                        toolBuffers[t.id].argsText += t.function.arguments;
+
+                        // Optional: preview while create_design args stream in
+                        if (toolBuffers[t.id].name === "create_design") {
+                          const partialHtml = this.extractPartialJsonString(
+                            toolBuffers[t.id].argsText,
+                            "html"
+                          );
+                          if (partialHtml) this.updatePreviewHtml(partialHtml);
+                        }
+                      }
+                    }
+                  }
+
+                  // Finish: tool_calls -> execute after stream ends
+                  if (finish === "tool_calls") {
+                    // push the assistant text so far (if any)
+                    pushAssistantIfNeeded();
+
+                    // collect tool calls
+                    for (const [id, buf] of Object.entries(toolBuffers)) {
+                      let args = {};
+                      try {
+                        args = JSON.parse(buf.argsText);
+                      } catch {
+                        // best-effort parse; we already previewed if possible
+                        try {
+                          const html = this.extractPartialJsonString(
+                            buf.argsText,
+                            "html"
+                          );
+                          if (html) args.html = html;
+                        } catch {}
+                      }
+                      toolCalls.push({ id, name: buf.name, args });
+                    }
+                  }
+                }
+              }
+
+              // End of stream
+              // finalize assistant text bubble
+              pushAssistantIfNeeded();
+
+              return { toolCalls };
+            },
+
+            // ===== Tool executors =====
+            async executeToolCall(name, args, toolCallId) {
+              try {
+                if (name === "create_design")
+                  return this.tool_create_design(args);
+                if (name === "edit_design") return this.tool_edit_design(args);
+                if (name === "replace_string")
+                  return this.tool_replace_string(args);
+                if (name === "list_designs") return this.tool_list_designs();
+                return { error: "Unknown tool: " + name };
+              } catch (e) {
+                console.error("Tool error", name, e);
+                return { error: String(e) };
+              }
+            },
+
+            tool_create_design(args) {
+              const id = uid();
+              const html = String(args.html || "");
+              const d = {
+                id,
+                name: (args.name || "Untitled").toString().slice(0, 80),
+                html: html,
+                x: Number.isFinite(args.x) ? args.x : 40,
+                y: Number.isFinite(args.y) ? args.y : 40,
+                width: Number.isFinite(args.width) ? args.width : 560,
+                height: Number.isFinite(args.height) ? args.height : 420,
+                z: Math.max(0, ...this.designs.map(x => x.z || 0)) + 1,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                renderMode: args.renderMode || this.renderModeDefault
+              };
+
+              // If a preview exists, replace it with the committed design (keeps position)
+              const previewIdx = this.designs.findIndex(
+                x => x.id === this.previewBoxId
+              );
+              if (previewIdx >= 0) {
+                const preview = this.designs[previewIdx];
+                d.x = preview.x;
+                d.y = preview.y;
+                d.width = preview.width;
+                d.height = preview.height;
+                d.z = preview.z;
+                this.designs.splice(previewIdx, 1, d);
+              } else {
+                this.designs.push(d);
+              }
+
+              this.$nextTick(() => this.renderDesign(d));
+              this.saveState();
+              return { id: d.id, name: d.name };
+            },
+
+            tool_edit_design(args) {
+              const d = this.getDesign(args.id);
+              if (!d) return { error: "Design not found: " + args.id };
+              if (typeof args.new_html === "string" && args.new_html.trim()) {
+                d.html = args.new_html;
+                d.updatedAt = Date.now();
+                this.$nextTick(() => this.renderDesign(d));
+                this.saveState();
+                return { id: d.id, status: "updated" };
+              }
+
+              // Optional lightweight heuristic when only instruction is provided
+              const inst = (args.instruction || "").toLowerCase().trim();
+              if (!inst) {
+                return {
+                  id: d.id,
+                  warning:
+                    "No new_html or instruction provided. Prefer replace_string for small edits."
+                };
+              }
+
+              // Heuristic: instruction like  replace: "old" -> "new"
+              const m = inst.match(/replace\s*:\s*"(.*)"\s*->\s*"(.*)"/i);
+              if (m) {
+                const oldS = m[1],
+                  newS = m[2];
+                const countBefore = (
+                  d.html.match(new RegExp(escapeRegExp(oldS), "g")) || []
+                ).length;
+                d.html = d.html.replace(
+                  new RegExp(escapeRegExp(oldS), "g"),
+                  newS
+                );
+                const replaced = countBefore;
+                d.updatedAt = Date.now();
+                this.$nextTick(() => this.renderDesign(d));
+                this.saveState();
+                return { id: d.id, replaced };
+              }
+
+              // Otherwise ask the model to send full new_html
+              return {
+                id: d.id,
+                warning:
+                  "Instruction too vague. Please call edit_design with new_html or use replace_string."
+              };
+            },
+
+            tool_replace_string(args) {
+              const d = this.getDesign(args.id);
+              if (!d) return { error: "Design not found: " + args.id };
+
+              const oldS = String(args.old || "");
+              const newS = String(args.new || "");
+              if (!oldS) return { error: "old string is empty" };
+
+              let replacedCount = 0;
+              if (args.occurrences === "first") {
+                const idx = d.html.indexOf(oldS);
+                if (idx !== -1) {
+                  d.html =
+                    d.html.slice(0, idx) +
+                    newS +
+                    d.html.slice(idx + oldS.length);
+                  replacedCount = 1;
+                }
+              } else {
+                const re = new RegExp(escapeRegExp(oldS), "g");
+                replacedCount = (d.html.match(re) || []).length;
+                d.html = d.html.replace(re, newS);
+              }
+
+              d.updatedAt = Date.now();
+              this.$nextTick(() => this.renderDesign(d));
+              this.saveState();
+              return { id: d.id, replacedCount };
+            },
+
+            tool_list_designs() {
+              const list = this.designs.map(d => ({
+                id: d.id,
+                name: d.name,
+                size: { w: d.width, h: d.height },
+                position: { x: d.x, y: d.y },
+                z: d.z,
+                updatedAt: d.updatedAt
+              }));
+              return list;
+            },
+
+            // ===== Preview helpers =====
+            extractOpenHtmlCodeBlock(text) {
+              // Return the content of the LAST ```html block that has NOT yet been closed.
+              const openIdx = text.toLowerCase().lastIndexOf("```html");
+              if (openIdx === -1) return null;
+              const after = text.slice(openIdx + 7);
+              const closeIdx = after.indexOf("```");
+              if (closeIdx === -1) {
+                // Still open – preview this part (trim leading newline)
+                return after.replace(/^\s*\n?/, "");
+              }
+              return null; // already closed
+            },
+            extractPartialJsonString(buf, field) {
+              // Tolerant extractor for a JSON string field (e.g., "html": "...")
+              const key = `"${field}"`;
+              const k = buf.indexOf(key);
+              if (k === -1) return null;
+              let i = buf.indexOf(":", k);
+              if (i === -1) return null;
+              // skip whitespace
+              while (i + 1 < buf.length && /\s/.test(buf[i + 1])) i++;
+              if (buf[i + 1] !== '"') return null;
+              let j = i + 2,
+                out = "",
+                esc = false;
+              for (; j < buf.length; j++) {
+                const ch = buf[j];
+                if (esc) {
+                  if (ch === "n") out += "\n";
+                  else if (ch === "t") out += "\t";
+                  else if (ch === "r") {
+                    /* ignore */
+                  } else out += ch;
+                  esc = false;
+                } else {
+                  if (ch === "\\") esc = true;
+                  else if (ch === '"') {
+                    break;
+                  } // closed
+                  else out += ch;
+                }
+              }
+              // Even if not closed yet we can preview partial content
+              return out;
+            },
+
+            // ===== Misc =====
+            scrollChatToEndSoon: debounce(function () {
+              const el = this.$refs.chatScroll;
+              if (el) el.scrollTop = el.scrollHeight;
+            }, 40),
+            newCanvas() {
+              if (
+                !confirm(
+                  "Clear canvas and chat history (except system prompt)?"
+                )
+              )
+                return;
+              this.designs = [];
+              this.messages = [
+                { _id: uid(), role: "system", content: SYSTEM_PROMPT }
+              ];
+              this.saveState();
+            },
+            exportHtml(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              const sanitized = this.sanitize(d.html);
+              const blob = new Blob([sanitized], { type: "text/html" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = (d.name || d.id).replace(/[^\w.-]+/g, "_") + ".html";
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(() => {
+                URL.revokeObjectURL(url);
+                a.remove();
+              }, 100);
+            }
+          },
+          watch: {
+            apiKey() {
+              this.persistApiKey();
+            },
+            model() {
+              this.persistModel();
+            },
+            renderModeDefault() {
+              this.persistRenderModeDefault();
+            }
+          }
+        });
+      })();
+    </script>
+
+    <!-- SECURITY NOTE:
+This is a client-only demo. Do NOT deploy with a long-lived API key.
+For production, issue short-lived ephemeral tokens from a tiny server. -->
+  </body>
+</html>
