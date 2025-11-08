@@ -459,9 +459,10 @@ You are an assistant that generates and edits UI designs as HTML fragments.
         const uid = () => Math.random().toString(36).slice(2, 10);
         const debounce = (fn, ms = 300) => {
           let t;
-          return (...a) => {
+          return function(...a) {
+            const context = this;
             clearTimeout(t);
-            t = setTimeout(() => fn(...a), ms);
+            t = setTimeout(() => fn.apply(context, a), ms);
           };
         };
         const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -530,6 +531,11 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                       this.designs.forEach(d => this.renderDesign(d))
                     );
                   }
+                }
+                // Ensure _streamLoopGuard is always a valid number
+                if (typeof this._streamLoopGuard !== 'number' || isNaN(this._streamLoopGuard)) {
+                  this._streamLoopGuard = 0;
+                  console.warn('[DEBUG] Reset _streamLoopGuard to 0 (was:', this._streamLoopGuard, ')');
                 }
               } catch (e) {
                 console.warn("restore failed", e);
@@ -732,12 +738,32 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
             // ===== OpenAI chat orchestration =====
             async send() {
+              console.log('[DEBUG] send() called', {
+                hasApiKey: !!this.apiKey,
+                apiKeyPrefix: this.apiKey ? this.apiKey.substring(0, 7) + '...' : 'none',
+                userInput: this.userInput,
+                isStreaming: this.isStreaming
+              });
+
               if (!this.apiKey) {
                 alert("Provide an OpenAI API key first.");
                 return;
               }
+
+              // Validate API key format
+              if (!this.apiKey.startsWith('sk-')) {
+                alert("Invalid API key format. OpenAI API keys should start with 'sk-'");
+                console.error('[ERROR] Invalid API key format');
+                return;
+              }
+
               const text = this.userInput.trim();
-              if (!text) return;
+              if (!text) {
+                console.log('[DEBUG] Empty user input after trim, returning');
+                return;
+              }
+
+              console.log('[DEBUG] Preparing to send message:', text);
 
               this.ensureSystemPrompt();
               this.messages.push({ _id: uid(), role: "user", content: text });
@@ -746,14 +772,26 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
               try {
                 this.isStreaming = true;
+                console.log('[DEBUG] Starting chat loop...');
                 await this.chatLoop();
+                console.log('[DEBUG] Chat loop completed successfully');
               } catch (e) {
                 if (e && (e.name === 'AbortError' || String(e).includes('AbortError'))) {
                   // User pressed Stop – this is expected; no alert.
                   console.debug('Streaming aborted by user.');
                 } else {
-                  console.error(e);
-                  alert("Request failed. See console for details.");
+                  console.error('[ERROR] Request failed:', e);
+                  let errorMsg = "Request failed. ";
+                  if (e.message && e.message.includes('Failed to fetch')) {
+                    errorMsg += "Network error - check your internet connection or CORS settings.";
+                  } else if (e.message && e.message.includes('401')) {
+                    errorMsg += "Invalid API key.";
+                  } else if (e.message && e.message.includes('429')) {
+                    errorMsg += "Rate limit exceeded.";
+                  } else {
+                    errorMsg += "See console for details.";
+                  }
+                  alert(errorMsg);
                 }
               } finally {
                 this.isStreaming = false;
@@ -761,6 +799,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
                 this.saveState();
+                console.log('[DEBUG] send() finished, streaming stopped');
               }
             },
             stop() {
@@ -769,19 +808,44 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
             async chatLoop() {
               // Continue streaming/acting until the assistant stops calling tools
+              console.log('[DEBUG] chatLoop() started');
+
+              // Ensure _streamLoopGuard is a valid number
+              if (typeof this._streamLoopGuard !== 'number' || isNaN(this._streamLoopGuard)) {
+                console.error('[ERROR] _streamLoopGuard is not a number:', this._streamLoopGuard);
+                this._streamLoopGuard = 0;
+              }
+
               let continueLoop = true;
               let loopGuard = ++this._streamLoopGuard;
+              let iteration = 0;
+
+              console.log('[DEBUG] Loop guard check:', {
+                continueLoop,
+                loopGuard,
+                streamLoopGuard: this._streamLoopGuard,
+                matches: loopGuard === this._streamLoopGuard
+              });
 
               while (continueLoop && loopGuard === this._streamLoopGuard) {
+                iteration++;
+                console.log(`[DEBUG] chatLoop iteration ${iteration}`);
                 const result = await this.streamOnce();
+                console.log(`[DEBUG] streamOnce() returned:`, {
+                  hasToolCalls: !!(result.toolCalls && result.toolCalls.length),
+                  toolCallCount: result.toolCalls?.length || 0
+                });
+
                 if (result.toolCalls && result.toolCalls.length) {
                   // execute each tool call and append tool results
                   for (const call of result.toolCalls) {
+                    console.log(`[DEBUG] Executing tool: ${call.name}`);
                     const toolResult = await this.executeToolCall(
                       call.name,
                       call.args,
                       call.id
                     );
+                    console.log(`[DEBUG] Tool ${call.name} result:`, toolResult);
                     this.messages.push({
                       _id: uid(),
                       role: "tool",
@@ -794,12 +858,15 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                   // loop will continue to allow the model to respond to tool results
                   continueLoop = true;
                 } else {
+                  console.log('[DEBUG] No tool calls, ending chat loop');
                   continueLoop = false;
                 }
               }
+              console.log('[DEBUG] chatLoop() finished');
             },
 
             async streamOnce() {
+              console.log('[DEBUG] streamOnce() started');
               this.assistantStreamingText = "";
               const toolBuffers = {}; // id -> { name, argsText }
               const toolCalls = [];
@@ -817,7 +884,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 Authorization: "Bearer " + this.apiKey
               };
 
-              const body = JSON.stringify({
+              const requestPayload = {
                 model: this.model,
                 stream: true,
                 messages: this.messages.map(m => {
@@ -832,21 +899,49 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 }),
                 tools: TOOLS_SPEC,
                 temperature: 0.4
+              };
+
+              console.log('[DEBUG] Making fetch request to OpenAI:', {
+                url,
+                model: this.model,
+                messageCount: requestPayload.messages.length,
+                hasTools: !!TOOLS_SPEC.length
               });
+
+              const body = JSON.stringify(requestPayload);
 
               const controller = new AbortController();
               this._abortController = controller;
 
-              const res = await fetch(url, {
-                method: "POST",
-                headers,
-                body,
-                signal: controller.signal
-              });
+              let res;
+              try {
+                res = await fetch(url, {
+                  method: "POST",
+                  headers,
+                  body,
+                  signal: controller.signal
+                });
+                console.log('[DEBUG] Fetch response received:', {
+                  status: res.status,
+                  ok: res.ok,
+                  hasBody: !!res.body
+                });
+              } catch (fetchError) {
+                console.error('[ERROR] Fetch failed:', fetchError);
+                throw fetchError;
+              }
+
               if (!res.ok || !res.body) {
                 const err = await res.text().catch(() => String(res.status));
+                console.error('[ERROR] OpenAI API error:', {
+                  status: res.status,
+                  statusText: res.statusText,
+                  errorBody: err
+                });
                 throw new Error("OpenAI error: " + err);
               }
+
+              console.log('[DEBUG] Starting to read stream...');
 
               const reader = res.body.getReader();
               const decoder = new TextDecoder();
