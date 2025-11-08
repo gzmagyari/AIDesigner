@@ -218,7 +218,6 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
   </head>
   <body>
     <div id="app" class="app" v-cloak>
@@ -256,7 +255,6 @@
             <button class="btn ghost" @click="listDesignsToChat()">
               List designs
             </button>
-            <span class="pill" title="Autosave">Autosave On</span>
           </div>
           <small class="hint"
             >Tip: Ask “Create a hero section card with a headline + CTA”. Then
@@ -487,9 +485,8 @@ You are an assistant that generates and edits UI designs as HTML fragments.
             previewBoxId: "__preview__"
           }),
           created() {
-            // initial system prompt & restore state
+            // initial system prompt
             this.ensureSystemPrompt();
-            this.restoreState();
           },
           mounted() {
             this.$watch(
@@ -520,39 +517,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 this.renderModeDefault || "shadow"
               );
             },
-            async restoreState() {
-              try {
-                const saved = await localforage.getItem("mini-stitch:state");
-                if (saved) {
-                  if (saved.messages?.length) this.messages = saved.messages;
-                  if (saved.designs?.length) {
-                    this.designs = saved.designs;
-                    this.$nextTick(() =>
-                      this.designs.forEach(d => this.renderDesign(d))
-                    );
-                  }
-                }
-                // Ensure _streamLoopGuard is always a valid number
-                if (typeof this._streamLoopGuard !== 'number' || isNaN(this._streamLoopGuard)) {
-                  this._streamLoopGuard = 0;
-                  console.warn('[DEBUG] Reset _streamLoopGuard to 0 (was:', this._streamLoopGuard, ')');
-                }
-              } catch (e) {
-                console.warn("restore failed", e);
-              }
-            },
-            saveState: debounce(async function () {
-              try {
-                await localforage.setItem("mini-stitch:state", {
-                  messages: this.messages.filter(
-                    m => m.role !== "system" || m.content === SYSTEM_PROMPT
-                  ),
-                  designs: this.designs
-                });
-              } catch (e) {
-                console.warn("save failed", e);
-              }
-            }, 500),
 
             // ===== Canvas helpers =====
             bringToFront(id) {
@@ -560,7 +524,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               const d = this.getDesign(id);
               if (!d) return;
               Vue.set(d, "z", top);
-              this.saveState();
             },
             renameDesign(id) {
               const d = this.getDesign(id);
@@ -568,7 +531,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               const name = prompt("New name for design:", d.name || "");
               if (name !== null) {
                 d.name = name.trim();
-                this.saveState();
               }
             },
             duplicateDesign(id) {
@@ -583,12 +545,10 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               copy.isPreview = false;
               this.designs.push(copy);
               this.$nextTick(() => this.renderDesign(copy));
-              this.saveState();
             },
             removeDesign(id) {
               const idx = this.designs.findIndex(d => d.id === id);
               if (idx >= 0) this.designs.splice(idx, 1);
-              this.saveState();
             },
             getDesign(id) {
               return this.designs.find(d => d.id === id);
@@ -607,7 +567,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 name: "list_designs",
                 content: JSON.stringify(list, null, 2)
               });
-              this.saveState();
             },
 
             // ===== Rendering & isolation =====
@@ -691,6 +650,11 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
             // ===== Interactions =====
             attachInteractions() {
+              // Ensure _interactInit is initialized
+              if (!this._interactInit) {
+                this._interactInit = {};
+              }
+
               // attach interact.js to each box once
               this.designs.forEach(d => {
                 if (this._interactInit[d.id]) return;
@@ -708,8 +672,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                         dd.y += event.dy;
                         event.target.style.left = dd.x + "px";
                         event.target.style.top = dd.y + "px";
-                      },
-                      end: () => this.saveState()
+                      }
                     },
                     inertia: false
                   })
@@ -729,8 +692,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                         style.height = dd.height + "px";
                         style.left = dd.x + "px";
                         style.top = dd.y + "px";
-                      },
-                      end: () => this.saveState()
+                      }
                     }
                   });
               });
@@ -768,7 +730,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               this.ensureSystemPrompt();
               this.messages.push({ _id: uid(), role: "user", content: text });
               this.userInput = "";
-              this.saveState();
 
               try {
                 this.isStreaming = true;
@@ -798,7 +759,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 this.assistantStreamingText = "";
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
-                this.saveState();
                 console.log('[DEBUG] send() finished, streaming stopped');
               }
             },
@@ -853,7 +813,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                       tool_call_id: call.id,
                       content: JSON.stringify(toolResult)
                     });
-                    this.saveState();
                   }
                   // loop will continue to allow the model to respond to tool results
                   continueLoop = true;
@@ -956,7 +915,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 ) {
                   this.messages.push(assistantMessage);
                   assistantMessagePushed = true;
-                  this.saveState();
                   // keep streaming text separate (for live view) but also keep final message
                 }
               };
@@ -1035,25 +993,36 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                   // Finish: tool_calls -> record assistant message with tool_calls, then execute tools
                   if (finish === "tool_calls") {
                     // Build the assistant's tool_calls message (arguments stay as a JSON string per API)
-                    const callsForMsg = Object.entries(toolBuffers).map(([id, buf]) => ({
-                      id,
-                      type: 'function',
-                      function: { name: buf.name, arguments: buf.argsText || '{}' }
-                    }));
-                    assistantMessage.tool_calls = callsForMsg;
-                    // Push a single assistant message that can include any streamed text AND the tool calls
-                    if (!assistantMessagePushed) {
-                      this.messages.push(assistantMessage);
-                      assistantMessagePushed = true;
-                      this.saveState();
-                    } else {
-                      // Rare case: if we already pushed text earlier, update the last assistant message inline
-                      const last = this.messages.slice().reverse().find(m => m.role === 'assistant' && !m.tool_call_id);
-                      if (last) { last.tool_calls = callsForMsg; this.saveState(); }
+                    // Filter out tool calls with empty or missing names (incomplete streaming chunks)
+                    const callsForMsg = Object.entries(toolBuffers)
+                      .filter(([id, buf]) => buf.name && buf.name.trim())
+                      .map(([id, buf]) => ({
+                        id,
+                        type: 'function',
+                        function: { name: buf.name, arguments: buf.argsText || '{}' }
+                      }));
+
+                    if (callsForMsg.length > 0) {
+                      assistantMessage.tool_calls = callsForMsg;
+                      // Push a single assistant message that can include any streamed text AND the tool calls
+                      if (!assistantMessagePushed) {
+                        this.messages.push(assistantMessage);
+                        assistantMessagePushed = true;
+                      } else {
+                        // Rare case: if we already pushed text earlier, update the last assistant message inline
+                        const last = this.messages.slice().reverse().find(m => m.role === 'assistant' && !m.tool_call_id);
+                        if (last) { last.tool_calls = callsForMsg; }
+                      }
                     }
 
                     // Collect parsed args for local execution next
                     for (const [id, buf] of Object.entries(toolBuffers)) {
+                      // Skip tool calls without valid names
+                      if (!buf.name || !buf.name.trim()) {
+                        console.warn('[DEBUG] Skipping tool call with empty name:', id);
+                        continue;
+                      }
+
                       let args = {};
                       try {
                         args = JSON.parse(buf.argsText);
@@ -1130,7 +1099,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               }
 
               this.$nextTick(() => this.renderDesign(d));
-              this.saveState();
               return { id: d.id, name: d.name };
             },
 
@@ -1141,7 +1109,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 d.html = args.new_html;
                 d.updatedAt = Date.now();
                 this.$nextTick(() => this.renderDesign(d));
-                this.saveState();
                 return { id: d.id, status: "updated" };
               }
 
@@ -1170,7 +1137,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 const replaced = countBefore;
                 d.updatedAt = Date.now();
                 this.$nextTick(() => this.renderDesign(d));
-                this.saveState();
                 return { id: d.id, replaced };
               }
 
@@ -1208,7 +1174,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
               d.updatedAt = Date.now();
               this.$nextTick(() => this.renderDesign(d));
-              this.saveState();
               return { id: d.id, replacedCount };
             },
 
@@ -1287,7 +1252,6 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               this.messages = [
                 { _id: uid(), role: "system", content: SYSTEM_PROMPT }
               ];
-              this.saveState();
             },
             exportHtml(id) {
               const d = this.getDesign(id);
