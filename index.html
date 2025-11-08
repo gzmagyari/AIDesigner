@@ -564,21 +564,33 @@ After creating or editing, confirm the action in a brief chat message.
                 });
               }
             },
-            saveState: debounce(function() {
+            saveState: debounce(function () {
               try {
-                localStorage.setItem('mini-stitch:messages', JSON.stringify(this.messages));
-                localStorage.setItem('mini-stitch:designs', JSON.stringify(this.designs.map(d => {
-                  // Don't save renderer instances or preview boxes
-                  const { _renderer, isPreview, ...rest } = d;
-                  return isPreview ? null : rest;
-                }).filter(Boolean)));
+                localStorage.setItem(
+                  "mini-stitch:messages",
+                  JSON.stringify(this.messages)
+                );
+                localStorage.setItem(
+                  "mini-stitch:designs",
+                  JSON.stringify(
+                    this.designs
+                      .map(d => {
+                        // Don't save renderer instances or preview boxes
+                        const { _renderer, isPreview, ...rest } = d;
+                        return isPreview ? null : rest;
+                      })
+                      .filter(Boolean)
+                  )
+                );
               } catch (e) {
-                console.warn('Failed to save state:', e);
+                console.warn("Failed to save state:", e);
               }
             }, 500),
             restoreState() {
               try {
-                const savedMessages = localStorage.getItem('mini-stitch:messages');
+                const savedMessages = localStorage.getItem(
+                  "mini-stitch:messages"
+                );
                 if (savedMessages) {
                   const parsed = JSON.parse(savedMessages);
                   if (Array.isArray(parsed) && parsed.length > 0) {
@@ -586,7 +598,9 @@ After creating or editing, confirm the action in a brief chat message.
                   }
                 }
 
-                const savedDesigns = localStorage.getItem('mini-stitch:designs');
+                const savedDesigns = localStorage.getItem(
+                  "mini-stitch:designs"
+                );
                 if (savedDesigns) {
                   const parsed = JSON.parse(savedDesigns);
                   if (Array.isArray(parsed) && parsed.length > 0) {
@@ -597,7 +611,7 @@ After creating or editing, confirm the action in a brief chat message.
                   }
                 }
               } catch (e) {
-                console.warn('Failed to restore state:', e);
+                console.warn("Failed to restore state:", e);
               }
             },
             persistApiKey() {
@@ -632,7 +646,7 @@ After creating or editing, confirm the action in a brief chat message.
             toggleFullscreen(id) {
               const d = this.getDesign(id);
               if (!d) return;
-              Vue.set(d, 'isFullscreen', !d.isFullscreen);
+              Vue.set(d, "isFullscreen", !d.isFullscreen);
             },
             duplicateDesign(id) {
               const d = this.getDesign(id);
@@ -877,7 +891,7 @@ After creating or editing, confirm the action in a brief chat message.
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
                 this.$nextTick(() => {
-                  const input = document.querySelector('.input input');
+                  const input = document.querySelector(".input input");
                   if (input) input.focus();
                 });
               }
@@ -973,7 +987,6 @@ After creating or editing, confirm the action in a brief chat message.
                   return out;
                 }),
                 tools: TOOLS_SPEC,
-                temperature: 0.4,
                 tool_choice: opts.toolChoice || "auto"
               };
 
@@ -984,7 +997,9 @@ After creating or editing, confirm the action in a brief chat message.
                 messageCount: requestPayload.messages.length,
                 lastThreeMessages: requestPayload.messages.slice(-3).map(m => ({
                   role: m.role,
-                  contentPreview: m.content ? m.content.substring(0, 100) : '(no content)',
+                  contentPreview: m.content
+                    ? m.content.substring(0, 100)
+                    : "(no content)",
                   hasToolCalls: !!m.tool_calls,
                   name: m.name
                 }))
@@ -1067,7 +1082,10 @@ After creating or editing, confirm the action in a brief chat message.
 
                   if (Array.isArray(delta.tool_calls)) {
                     for (const t of delta.tool_calls) {
-                      console.log('[STREAM DELTA] tool_call chunk:', JSON.stringify(t));
+                      console.log(
+                        "[STREAM DELTA] tool_call chunk:",
+                        JSON.stringify(t)
+                      );
 
                       // Track index->id mapping when id first appears
                       if (t.id && t.index !== undefined) {
@@ -1078,7 +1096,10 @@ After creating or editing, confirm the action in a brief chat message.
                       const toolId = indexToId[t.index] || t.id;
 
                       if (!toolId) {
-                        console.warn('[STREAM DELTA] No id available for index', t.index);
+                        console.warn(
+                          "[STREAM DELTA] No id available for index",
+                          t.index
+                        );
                         continue;
                       }
 
@@ -1096,7 +1117,10 @@ After creating or editing, confirm the action in a brief chat message.
                         this.ensurePreviewBox();
                       }
                       if (t.function?.arguments) {
-                        console.log('[STREAM DELTA] Appending arguments chunk:', t.function.arguments);
+                        console.log(
+                          "[STREAM DELTA] Appending arguments chunk:",
+                          t.function.arguments
+                        );
                         toolBuffers[toolId].argsText += t.function.arguments;
                         if (toolBuffers[toolId].name === "create_design") {
                           const partialHtml = this.extractPartialJsonString(
@@ -1111,7 +1135,9 @@ After creating or editing, confirm the action in a brief chat message.
 
                   if (finish === "tool_calls") {
                     const callsForMsg = Object.entries(toolBuffers)
-                      .filter(([key, buf]) => buf.name && buf.name.trim() && buf.id)
+                      .filter(
+                        ([key, buf]) => buf.name && buf.name.trim() && buf.id
+                      )
                       .map(([key, buf]) => ({
                         id: buf.id,
                         type: "function",
@@ -1127,7 +1153,10 @@ After creating or editing, confirm the action in a brief chat message.
 
                     for (const [key, buf] of Object.entries(toolBuffers)) {
                       if (!buf.name || !buf.name.trim()) {
-                        console.warn("Skipping tool call with empty name:", key);
+                        console.warn(
+                          "Skipping tool call with empty name:",
+                          key
+                        );
                         continue;
                       }
                       if (!buf.id) {
