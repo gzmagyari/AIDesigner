@@ -265,7 +265,7 @@
         <div class="chat" ref="chatScroll">
           <div
             v-for="msg in messages"
-            v-if="msg.role !== 'system'"
+            v-if="msg.role !== 'system' && msg.role !== 'tool' && displayContent(msg)"
             :key="msg._id"
             class="bubble"
             :class="msg.role"
@@ -273,11 +273,11 @@
             <div class="role">
               {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
             </div>
-            <div>{{ msg.content }}</div>
+            <div>{{ displayContent(msg) }}</div>
           </div>
           <div v-if="assistantStreamingText" class="bubble assistant">
             <div class="role">assistant · streaming</div>
-            <div>{{ assistantStreamingText }}</div>
+            <div>{{ displayStreamingText }}</div>
           </div>
         </div>
 
@@ -393,6 +393,7 @@
                 type: "object",
                 properties: {
                   id: { type: "string" },
+                  name: { type: "string", description: "Optional design name if id is unknown." },
                   new_html: {
                     type: "string",
                     description:
@@ -404,7 +405,7 @@
                       "If new_html is not provided, a short instruction. Prefer using replace_string for surgical edits."
                   }
                 },
-                required: ["id"]
+                required: []
               }
             }
           },
@@ -418,6 +419,7 @@
                 type: "object",
                 properties: {
                   id: { type: "string" },
+                  name: { type: "string", description: "Optional design name if id is unknown." },
                   old: { type: "string" },
                   new: { type: "string" },
                   occurrences: {
@@ -426,7 +428,7 @@
                     default: "all"
                   }
                 },
-                required: ["id", "old", "new"]
+                required: ["old", "new"]
               }
             }
           },
@@ -441,16 +443,12 @@
         ];
 
         const SYSTEM_PROMPT = `
-You are an assistant that generates and edits UI designs as HTML fragments.
-- ALWAYS use the provided tools to create or modify designs.
-- For small textual or class/style changes, prefer the "replace_string" tool.
-- When unsure which design box to target, call "list_designs" first, then reference by id.
-- Generated HTML must be self-contained, semantic, and include a <style> block if styling is needed.
-- Avoid <script> tags unless the user explicitly asks for interactivity that demands it.
-- IMPORTANT: For best UX, when creating a new design:
-  1) First stream a fenced code block with the HTML: \`\`\`html ... \`\`\`
-  2) THEN call create_design with the final HTML (and a good name).
-- When editing, if possible stream an \`\`\`html\`\`\` preview of the changed section before the tool call.
+You only act via tools: create_design, edit_design, replace_string, list_designs.
+- Do not put HTML in chat; never use code fences.
+- For create_design you MUST pass a non-empty string 'html' containing the full self‑contained HTML (with <style> if needed).
+- If a tool result has an 'error', immediately fix the arguments and call a tool again.
+- For small text/class/style tweaks, use replace_string. Otherwise use edit_design with new_html.
+- If unsure which box, call list_designs first, then reference the chosen id.
 `.trim();
 
         // Utilities
@@ -482,7 +480,11 @@ You are an assistant that generates and edits UI designs as HTML fragments.
             _abortController: null,
             _streamLoopGuard: 0, // to prevent orphan loops
             // live preview state (via ```html code fences or partial tool args)
-            previewBoxId: "__preview__"
+            previewBoxId: "__preview__",
+            // keep the latest preview HTML so we can commit even if the tool args omit `html`
+            previewLastHtml: "",
+            // track last active design to resolve ambiguous edits
+            lastActiveDesignId: null
           }),
           created() {
             // initial system prompt
@@ -496,6 +498,30 @@ You are an assistant that generates and edits UI designs as HTML fragments.
             );
           },
           methods: {
+            // --- Chat display helpers (strip fences & stray ``` lines) ---
+            stripFencedCode(text) {
+              if (!text) return "";
+              let out = String(text);
+              // Remove complete fenced blocks (```lang ... ```)
+              out = out.replace(/```[\w-]*\n[\s\S]*?\n```/g, "");
+              // Remove any remaining simple fenced blocks
+              out = out.replace(/```[\s\S]*?```/g, "");
+              // Remove any *open* fence to the end (handles partial streaming)
+              out = out.replace(/```[\w-]*[\s\S]*$/g, "");
+              // Remove stray backtick triplets just in case
+              out = out.replace(/```+/g, "");
+              // Remove lone backtick lines (rare)
+              out = out.replace(/^\s*`\s*$/gim, "");
+              // Collapse big gaps
+              out = out.replace(/\n{3,}/g, "\n\n");
+              return out.trim();
+            },
+            displayContent(msg) {
+              // Hide code fences for assistant messages in the transcript
+              if (msg.role === "assistant") return this.stripFencedCode(msg.content);
+              return msg.content;
+            },
+
             ensureSystemPrompt() {
               if (!this.messages.length || this.messages[0].role !== "system") {
                 this.messages.unshift({
@@ -524,6 +550,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               const d = this.getDesign(id);
               if (!d) return;
               Vue.set(d, "z", top);
+              this.lastActiveDesignId = id;
             },
             renameDesign(id) {
               const d = this.getDesign(id);
@@ -545,6 +572,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               copy.isPreview = false;
               this.designs.push(copy);
               this.$nextTick(() => this.renderDesign(copy));
+              this.lastActiveDesignId = copy.id;
             },
             removeDesign(id) {
               const idx = this.designs.findIndex(d => d.id === id);
@@ -552,6 +580,24 @@ You are an assistant that generates and edits UI designs as HTML fragments.
             },
             getDesign(id) {
               return this.designs.find(d => d.id === id);
+            },
+            getDesignByName(name) {
+              if (!name) return null;
+              const n = String(name).trim().toLowerCase();
+              return this.designs.find(d => (d.name || "").trim().toLowerCase() === n) || null;
+            },
+            resolveDesignId(args) {
+              // Priority: explicit id -> explicit name -> last active -> only design (if exactly 1)
+              if (args && typeof args.id === "string" && args.id.trim()) return args.id.trim();
+              if (args && typeof args.name === "string") {
+                const byName = this.getDesignByName(args.name);
+                if (byName) return byName.id;
+              }
+              if (this.lastActiveDesignId && this.getDesign(this.lastActiveDesignId)) {
+                return this.lastActiveDesignId;
+              }
+              if (this.designs.length === 1) return this.designs[0].id;
+              return null;
             },
             listDesignsToChat() {
               const list = this.designs.map(d => ({
@@ -639,6 +685,8 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               const d = this.ensurePreviewBox();
               d.html = html;
               d.updatedAt = Date.now();
+              // remember latest preview html for commit fallback
+              this.previewLastHtml = html;
               this.$nextTick(() => this.renderDesign(d));
             },
             clearPreview() {
@@ -779,6 +827,9 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               let continueLoop = true;
               let loopGuard = ++this._streamLoopGuard;
               let iteration = 0;
+              // require at least one tool call on the first pass
+              let requireToolThisTurn = true;
+              const MAX_TOOL_ROUNDS = 6; // hard stop to avoid infinite loops
 
               console.log('[DEBUG] Loop guard check:', {
                 continueLoop,
@@ -789,14 +840,20 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
               while (continueLoop && loopGuard === this._streamLoopGuard) {
                 iteration++;
+                if (iteration > MAX_TOOL_ROUNDS) {
+                  console.warn('[DEBUG] Max tool rounds reached; aborting turn.');
+                  break;
+                }
                 console.log(`[DEBUG] chatLoop iteration ${iteration}`);
-                const result = await this.streamOnce();
+                const result = await this.streamOnce({ toolChoice: requireToolThisTurn ? "required" : "auto" });
                 console.log(`[DEBUG] streamOnce() returned:`, {
                   hasToolCalls: !!(result.toolCalls && result.toolCalls.length),
                   toolCallCount: result.toolCalls?.length || 0
                 });
 
                 if (result.toolCalls && result.toolCalls.length) {
+                  // Only relax "required" when we actually applied a change (create/edit/replace) successfully.
+                  let mutationSucceeded = false; // flips true when a non-error mutation occurs
                   // execute each tool call and append tool results
                   for (const call of result.toolCalls) {
                     console.log(`[DEBUG] Executing tool: ${call.name}`);
@@ -813,8 +870,15 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                       tool_call_id: call.id,
                       content: JSON.stringify(toolResult)
                     });
+                    // Treat create_design/edit_design/replace_string without error as a successful mutation
+                    if ((call.name === "create_design" || call.name === "edit_design" || call.name === "replace_string")
+                        && toolResult && !toolResult.error) {
+                      mutationSucceeded = true;
+                    }
                   }
-                  // loop will continue to allow the model to respond to tool results
+                  // Keep requiring tools until a mutation actually succeeded
+                  requireToolThisTurn = mutationSucceeded ? false : true;
+                  // loop will continue to allow the model to respond to tool results (e.g., call a follow-up tool)
                   continueLoop = true;
                 } else {
                   console.log('[DEBUG] No tool calls, ending chat loop');
@@ -824,7 +888,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               console.log('[DEBUG] chatLoop() finished');
             },
 
-            async streamOnce() {
+            async streamOnce(opts = {}) {
               console.log('[DEBUG] streamOnce() started');
               this.assistantStreamingText = "";
               const toolBuffers = {}; // id -> { name, argsText }
@@ -857,7 +921,8 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                   return out;
                 }),
                 tools: TOOLS_SPEC,
-                temperature: 0.4
+                temperature: 0.4,
+                tool_choice: opts.toolChoice || "auto"
               };
 
               console.log('[DEBUG] Making fetch request to OpenAI:', {
@@ -975,6 +1040,10 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                       }
                       if (t.function?.name)
                         toolBuffers[t.id].name = t.function.name;
+                      // As soon as we know it's a create_design tool call, bring up the preview if missing
+                      if (toolBuffers[t.id].name === "create_design") {
+                        this.ensurePreviewBox();
+                      }
                       if (t.function?.arguments) {
                         toolBuffers[t.id].argsText += t.function.arguments;
 
@@ -1067,7 +1136,26 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
             tool_create_design(args) {
               const id = uid();
-              const html = String(args.html || "");
+              // Prefer tool arg HTML; fall back to the last live preview (from code-block) or current preview box
+              let html = typeof args.html === "string" ? args.html : "";
+              if (!html.trim()) {
+                if (this.previewLastHtml && this.previewLastHtml.trim()) {
+                  html = this.previewLastHtml;
+                } else {
+                  const preview = this.getDesign(this.previewBoxId);
+                  if (preview && typeof preview.html === "string" && preview.html.trim()) {
+                    html = preview.html;
+                  }
+                }
+              }
+              // If still empty, tell the model to retry properly (no box is created)
+              if (!html.trim()) {
+                return {
+                  error: "missing_html",
+                  message: "create_design requires a non-empty 'html' string argument; please call create_design again with 'html'.",
+                  required: ["html"]
+                };
+              }
               const d = {
                 id,
                 name: (args.name || "Untitled").toString().slice(0, 80),
@@ -1099,16 +1187,22 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               }
 
               this.$nextTick(() => this.renderDesign(d));
+              // consume the remembered preview so it won't leak into the next create
+              this.previewLastHtml = "";
+              this.lastActiveDesignId = d.id;
+              this.lastCreatedDesignId = d.id;
               return { id: d.id, name: d.name };
             },
 
             tool_edit_design(args) {
-              const d = this.getDesign(args.id);
+              const resolvedId = this.resolveDesignId(args);
+              const d = resolvedId ? this.getDesign(resolvedId) : null;
               if (!d) return { error: "Design not found: " + args.id };
               if (typeof args.new_html === "string" && args.new_html.trim()) {
                 d.html = args.new_html;
                 d.updatedAt = Date.now();
                 this.$nextTick(() => this.renderDesign(d));
+                this.lastActiveDesignId = d.id;
                 return { id: d.id, status: "updated" };
               }
 
@@ -1149,7 +1243,8 @@ You are an assistant that generates and edits UI designs as HTML fragments.
             },
 
             tool_replace_string(args) {
-              const d = this.getDesign(args.id);
+              const resolvedId = this.resolveDesignId(args);
+              const d = resolvedId ? this.getDesign(resolvedId) : null;
               if (!d) return { error: "Design not found: " + args.id };
 
               const oldS = String(args.old || "");
@@ -1174,6 +1269,7 @@ You are an assistant that generates and edits UI designs as HTML fragments.
 
               d.updatedAt = Date.now();
               this.$nextTick(() => this.renderDesign(d));
+              this.lastActiveDesignId = d.id;
               return { id: d.id, replacedCount };
             },
 
@@ -1268,6 +1364,11 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 URL.revokeObjectURL(url);
                 a.remove();
               }, 100);
+            }
+          },
+          computed: {
+            displayStreamingText() {
+              return this.stripFencedCode(this.assistantStreamingText || "");
             }
           },
           watch: {
