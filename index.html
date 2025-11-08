@@ -265,7 +265,7 @@
         <div class="chat" ref="chatScroll">
           <template v-for="msg in messages">
             <div
-              v-if="msg.role !== 'system' && msg.role !== 'tool' && displayContent(msg)"
+              v-if="msg.role !== 'system' && msg.role !== 'tool'"
               :key="msg._id"
               class="bubble"
               :class="msg.role"
@@ -367,7 +367,8 @@
                   html: {
                     type: "string",
                     description:
-                      "Self-contained HTML fragment (no external deps). Avoid <script> unless explicitly requested."
+                      "Self-contained HTML fragment (no external deps). MUST be non-empty with actual HTML markup. Include inline <style> tags for styling. Avoid <script> unless explicitly requested.",
+                    minLength: 1
                   },
                   width: { type: "number", default: 480 },
                   height: { type: "number", default: 360 },
@@ -444,12 +445,15 @@
         ];
 
         const SYSTEM_PROMPT = `
-You only act via tools: create_design, edit_design, replace_string, list_designs.
+You act primarily via tools: create_design, edit_design, replace_string, list_designs.
+- Use create_design to make NEW designs. ALWAYS provide 'html' field with complete, non-empty, self-contained HTML markup (include inline <style> tags for styling). The html parameter is REQUIRED and must contain actual HTML elements, not an empty string.
+- Use edit_design ONLY to modify EXISTING designs. Provide 'id' and 'new_html' (full replacement HTML).
+- Use replace_string for small text/class/style tweaks to existing designs. Provide 'id', 'old', and 'new' strings.
+- Use list_designs to see all current designs and their IDs when unsure which to edit.
+- After successfully creating or editing a design, briefly confirm the action in chat.
+- If a tool result has an 'error', understand what went wrong and fix the arguments. Do not retry the exact same call that just failed.
+- Keep responses concise and action-oriented.
 - Do not put HTML in chat; never use code fences.
-- For create_design you MUST pass a non-empty string 'html' containing the full self‑contained HTML (with <style> if needed).
-- If a tool result has an 'error', immediately fix the arguments and call a tool again.
-- For small text/class/style tweaks, use replace_string. Otherwise use edit_design with new_html.
-- If unsure which box, call list_designs first, then reference the chosen id.
 `.trim();
 
         // Utilities
@@ -480,7 +484,7 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
             _interactInit: {}, // id -> true
             _abortController: null,
             _streamLoopGuard: 0, // to prevent orphan loops
-            // live preview state (via ```html code fences or partial tool args)
+            // live preview state (via partial tool args only)
             previewBoxId: "__preview__",
             // keep the latest preview HTML so we can commit even if the tool args omit `html`
             previewLastHtml: "",
@@ -499,28 +503,18 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
             );
           },
           methods: {
-            // --- Chat display helpers (strip fences & stray ``` lines) ---
-            stripFencedCode(text) {
-              if (!text) return "";
-              let out = String(text);
-              // Remove complete fenced blocks (```lang ... ```)
-              out = out.replace(/```[\w-]*\n[\s\S]*?\n```/g, "");
-              // Remove any remaining simple fenced blocks
-              out = out.replace(/```[\s\S]*?```/g, "");
-              // Remove any *open* fence to the end (handles partial streaming)
-              out = out.replace(/```[\w-]*[\s\S]*$/g, "");
-              // Remove stray backtick triplets just in case
-              out = out.replace(/```+/g, "");
-              // Remove lone backtick lines (rare)
-              out = out.replace(/^\s*`\s*$/gim, "");
-              // Collapse big gaps
-              out = out.replace(/\n{3,}/g, "\n\n");
-              return out.trim();
-            },
             displayContent(msg) {
-              // Hide code fences for assistant messages in the transcript
-              if (msg.role === "assistant") return this.stripFencedCode(msg.content);
-              return msg.content;
+              // For messages with content, display it
+              if (msg.content && msg.content.trim()) {
+                return msg.content;
+              }
+              // For tool-only messages (e.g., assistant with only tool_calls), show indicator
+              if (msg.tool_calls && msg.tool_calls.length > 0) {
+                const toolNames = msg.tool_calls.map(tc => tc.function?.name || 'unknown').join(', ');
+                return `[Calling tools: ${toolNames}]`;
+              }
+              // Empty message
+              return msg.content || "";
             },
 
             ensureSystemPrompt() {
@@ -871,13 +865,13 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
                       tool_call_id: call.id,
                       content: JSON.stringify(toolResult)
                     });
-                    // Treat create_design/edit_design/replace_string without error as a successful mutation
-                    if ((call.name === "create_design" || call.name === "edit_design" || call.name === "replace_string")
-                        && toolResult && !toolResult.error) {
+                    // Count ANY successful tool call as progress (not just mutations)
+                    // This allows list_designs and other info-gathering tools to count as progress
+                    if (toolResult && !toolResult.error) {
                       mutationSucceeded = true;
                     }
                   }
-                  // Keep requiring tools until a mutation actually succeeded
+                  // After ANY successful tool call, allow model to respond freely (not force tools)
                   requireToolThisTurn = mutationSucceeded ? false : true;
                   // loop will continue to allow the model to respond to tool results (e.g., call a follow-up tool)
                   continueLoop = true;
@@ -985,16 +979,6 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
                 }
               };
 
-              // Helper: try preview from current assistantStreamingText code fence
-              const refreshPreviewFromContent = () => {
-                const html = this.extractOpenHtmlCodeBlock(
-                  this.assistantStreamingText
-                );
-                if (html !== null) {
-                  this.updatePreviewHtml(html);
-                }
-              };
-
               while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -1026,7 +1010,6 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
                   if (delta.content) {
                     assistantMessage.content += delta.content;
                     this.assistantStreamingText += delta.content;
-                    refreshPreviewFromContent();
                     this.scrollChatToEndSoon();
                   }
 
@@ -1137,7 +1120,7 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
 
             tool_create_design(args) {
               const id = uid();
-              // Prefer tool arg HTML; fall back to the last live preview (from code-block) or current preview box
+              // Prefer tool arg HTML; fall back to the last live preview or current preview box
               let html = typeof args.html === "string" ? args.html : "";
               if (!html.trim()) {
                 if (this.previewLastHtml && this.previewLastHtml.trim()) {
@@ -1145,17 +1128,19 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
                 } else {
                   const preview = this.getDesign(this.previewBoxId);
                   if (preview && typeof preview.html === "string" && preview.html.trim()) {
-                    html = preview.html;
+                    // Don't use preview if it's just the placeholder text
+                    if (!preview.html.includes("Generating preview")) {
+                      html = preview.html;
+                    }
                   }
                 }
               }
-              // If still empty, tell the model to retry properly (no box is created)
+              // GRACEFUL DEGRADATION: If still empty, create placeholder design instead of failing
               if (!html.trim()) {
-                return {
-                  error: "missing_html",
-                  message: "create_design requires a non-empty 'html' string argument; please call create_design again with 'html'.",
-                  required: ["html"]
-                };
+                html = '<div style="padding:32px;font:14px system-ui;color:#94a3b8;text-align:center;background:#0f172a;border-radius:8px;height:100%;display:flex;align-items:center;justify-content:center">' +
+                       '<div><h3 style="margin:0 0 12px;font-size:18px;color:#e5e7eb">Design Created</h3>' +
+                       '<p style="margin:0;opacity:0.7;font-size:13px">Ask me to add content or edit this design</p></div>' +
+                       '</div>';
               }
               const d = {
                 id,
@@ -1211,9 +1196,9 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
               const inst = (args.instruction || "").toLowerCase().trim();
               if (!inst) {
                 return {
-                  id: d.id,
-                  warning:
-                    "No new_html or instruction provided. Prefer replace_string for small edits."
+                  error: "missing_parameters",
+                  message: "edit_design requires 'new_html' (full HTML) or use replace_string for text changes.",
+                  id: d.id
                 };
               }
 
@@ -1237,9 +1222,9 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
 
               // Otherwise ask the model to send full new_html
               return {
-                id: d.id,
-                warning:
-                  "Instruction too vague. Please call edit_design with new_html or use replace_string."
+                error: "invalid_instruction",
+                message: "Instruction unclear. Please call edit_design with 'new_html' or use replace_string for specific text changes.",
+                id: d.id
               };
             },
 
@@ -1287,18 +1272,6 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
             },
 
             // ===== Preview helpers =====
-            extractOpenHtmlCodeBlock(text) {
-              // Return the content of the LAST ```html block that has NOT yet been closed.
-              const openIdx = text.toLowerCase().lastIndexOf("```html");
-              if (openIdx === -1) return null;
-              const after = text.slice(openIdx + 7);
-              const closeIdx = after.indexOf("```");
-              if (closeIdx === -1) {
-                // Still open – preview this part (trim leading newline)
-                return after.replace(/^\s*\n?/, "");
-              }
-              return null; // already closed
-            },
             extractPartialJsonString(buf, field) {
               // Tolerant extractor for a JSON string field (e.g., "html": "...")
               const key = `"${field}"`;
@@ -1369,7 +1342,7 @@ You only act via tools: create_design, edit_design, replace_string, list_designs
           },
           computed: {
             displayStreamingText() {
-              return this.stripFencedCode(this.assistantStreamingText || "");
+              return this.assistantStreamingText || "";
             }
           },
           watch: {
