@@ -263,18 +263,19 @@
         </div>
 
         <div class="chat" ref="chatScroll">
-          <div
-            v-for="msg in messages"
-            v-if="msg.role !== 'system' && msg.role !== 'tool' && displayContent(msg)"
-            :key="msg._id"
-            class="bubble"
-            :class="msg.role"
-          >
-            <div class="role">
-              {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
+          <template v-for="msg in messages">
+            <div
+              v-if="msg.role !== 'system' && msg.role !== 'tool' && displayContent(msg)"
+              :key="msg._id"
+              class="bubble"
+              :class="msg.role"
+            >
+              <div class="role">
+                {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
+              </div>
+              <div>{{ displayContent(msg) }}</div>
             </div>
-            <div>{{ displayContent(msg) }}</div>
-          </div>
+          </template>
           <div v-if="assistantStreamingText" class="bubble assistant">
             <div class="role">assistant · streaming</div>
             <div>{{ displayStreamingText }}</div>
