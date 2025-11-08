@@ -197,6 +197,17 @@
       .box.preview {
         border-style: dashed;
       }
+      .box.fullscreen {
+        position: absolute !important;
+        inset: 24px !important;
+        left: 24px !important;
+        top: 24px !important;
+        right: 24px !important;
+        bottom: 24px !important;
+        width: auto !important;
+        height: auto !important;
+        z-index: 9999 !important;
+      }
       .empty {
         position: absolute;
         inset: 0;
@@ -328,7 +339,7 @@
             v-for="d in designs"
             :key="d.id"
             class="box"
-            :class="{preview: d.isPreview}"
+            :class="{preview: d.isPreview, fullscreen: d.isFullscreen}"
             :style="{left:d.x+'px', top:d.y+'px', width:d.width+'px', height:d.height+'px', zIndex:d.z}"
             :data-id="d.id"
             @mousedown="bringToFront(d.id)"
@@ -338,7 +349,7 @@
                 >{{ d.name || d.id }}</span
               >
               <span class="actions">
-                <button title="Duplicate" @click.stop="duplicateDesign(d.id)">
+                <button title="Maximize" @click.stop="toggleFullscreen(d.id)">
                   ⧉
                 </button>
                 <button title="Export HTML" @click.stop="exportHtml(d.id)">
@@ -578,6 +589,11 @@ After creating or editing, confirm the action in a brief chat message.
               if (name !== null) {
                 d.name = name.trim();
               }
+            },
+            toggleFullscreen(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              Vue.set(d, 'isFullscreen', !d.isFullscreen);
             },
             duplicateDesign(id) {
               const d = this.getDesign(id);
