@@ -268,6 +268,7 @@
             </label>
           </div>
           <div class="buttons">
+            <button class="btn ghost" @click="clearChat()">Clear chat</button>
             <button class="btn ghost" @click="newCanvas()">New canvas</button>
             <button class="btn ghost" @click="listDesignsToChat()">
               List designs
@@ -527,6 +528,8 @@ After creating or editing, confirm the action in a brief chat message.
           created() {
             // initial system prompt
             this.ensureSystemPrompt();
+            // restore saved state
+            this.restoreState();
           },
           mounted() {
             this.$watch(
@@ -559,6 +562,42 @@ After creating or editing, confirm the action in a brief chat message.
                   role: "system",
                   content: SYSTEM_PROMPT
                 });
+              }
+            },
+            saveState: debounce(function() {
+              try {
+                localStorage.setItem('mini-stitch:messages', JSON.stringify(this.messages));
+                localStorage.setItem('mini-stitch:designs', JSON.stringify(this.designs.map(d => {
+                  // Don't save renderer instances or preview boxes
+                  const { _renderer, isPreview, ...rest } = d;
+                  return isPreview ? null : rest;
+                }).filter(Boolean)));
+              } catch (e) {
+                console.warn('Failed to save state:', e);
+              }
+            }, 500),
+            restoreState() {
+              try {
+                const savedMessages = localStorage.getItem('mini-stitch:messages');
+                if (savedMessages) {
+                  const parsed = JSON.parse(savedMessages);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    this.messages = parsed;
+                  }
+                }
+
+                const savedDesigns = localStorage.getItem('mini-stitch:designs');
+                if (savedDesigns) {
+                  const parsed = JSON.parse(savedDesigns);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    this.designs = parsed;
+                    this.$nextTick(() => {
+                      this.designs.forEach(d => this.renderDesign(d));
+                    });
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to restore state:', e);
               }
             },
             persistApiKey() {
@@ -1349,6 +1388,13 @@ After creating or editing, confirm the action in a brief chat message.
               const el = this.$refs.chatScroll;
               if (el) el.scrollTop = el.scrollHeight;
             }, 40),
+            clearChat() {
+              if (!confirm("Clear chat history? (Designs will be kept)"))
+                return;
+              this.messages = [
+                { _id: uid(), role: "system", content: SYSTEM_PROMPT }
+              ];
+            },
             newCanvas() {
               if (
                 !confirm(
@@ -1392,6 +1438,18 @@ After creating or editing, confirm the action in a brief chat message.
             },
             renderModeDefault() {
               this.persistRenderModeDefault();
+            },
+            messages: {
+              handler() {
+                this.saveState();
+              },
+              deep: true
+            },
+            designs: {
+              handler() {
+                this.saveState();
+              },
+              deep: true
             }
           }
         });
