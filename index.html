@@ -267,6 +267,7 @@
         <div class="chat" ref="chatScroll">
           <div
             v-for="msg in messages"
+            v-if="msg.role !== 'system'"
             :key="msg._id"
             class="bubble"
             :class="msg.role"
