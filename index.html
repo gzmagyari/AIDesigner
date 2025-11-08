@@ -46,6 +46,7 @@
         grid-template-rows: auto 1fr auto;
         border-right: 1px solid var(--border);
         background: var(--panel);
+        overflow: hidden;
       }
       .toolbar {
         padding: 12px;
@@ -97,8 +98,10 @@
         cursor: not-allowed;
       }
       .chat {
-        overflow: auto;
+        overflow-y: auto;
+        overflow-x: hidden;
         padding: 12px;
+        min-height: 0;
       }
       .bubble {
         padding: 10px 12px;
@@ -817,6 +820,10 @@ After creating or editing, confirm the action in a brief chat message.
                 this.assistantStreamingText = "";
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
+                this.$nextTick(() => {
+                  const input = document.querySelector('.input input');
+                  if (input) input.focus();
+                });
               }
             },
             stop() {
