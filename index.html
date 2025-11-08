@@ -5,6 +5,7 @@
     <title>Mini Stitch – AI Design Canvas (Vue2 + OpenAI)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
+      [v-cloak] { display: none; }
       :root {
         --bg: #0b1220;
         --panel: #0f172a;
@@ -746,12 +747,18 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                 this.isStreaming = true;
                 await this.chatLoop();
               } catch (e) {
-                console.error(e);
-                alert("Request failed. See console for details.");
+                if (e && (e.name === 'AbortError' || String(e).includes('AbortError'))) {
+                  // User pressed Stop – this is expected; no alert.
+                  console.debug('Streaming aborted by user.');
+                } else {
+                  console.error(e);
+                  alert("Request failed. See console for details.");
+                }
               } finally {
                 this.isStreaming = false;
                 this.assistantStreamingText = "";
                 this.clearPreview(); // remove any orphan preview when done
+                this._abortController = null;
                 this.saveState();
               }
             },
@@ -812,14 +819,16 @@ You are an assistant that generates and edits UI designs as HTML fragments.
               const body = JSON.stringify({
                 model: this.model,
                 stream: true,
-                messages: this.messages.map(
-                  ({ role, content, name, tool_call_id }) => ({
-                    role,
-                    content,
-                    name,
-                    tool_call_id
-                  })
-                ),
+                messages: this.messages.map(m => {
+                  // Preserve tool_calls on assistant messages so tool results can attach correctly.
+                  const { role, content, name, tool_call_id, tool_calls } = m;
+                  const out = { role };
+                  if (content !== undefined) out.content = content;
+                  if (name !== undefined) out.name = name;
+                  if (tool_call_id !== undefined) out.tool_call_id = tool_call_id;
+                  if (tool_calls !== undefined) out.tool_calls = tool_calls;
+                  return out;
+                }),
                 tools: TOOLS_SPEC,
                 temperature: 0.4
               });
@@ -927,12 +936,27 @@ You are an assistant that generates and edits UI designs as HTML fragments.
                     }
                   }
 
-                  // Finish: tool_calls -> execute after stream ends
+                  // Finish: tool_calls -> record assistant message with tool_calls, then execute tools
                   if (finish === "tool_calls") {
-                    // push the assistant text so far (if any)
-                    pushAssistantIfNeeded();
+                    // Build the assistant's tool_calls message (arguments stay as a JSON string per API)
+                    const callsForMsg = Object.entries(toolBuffers).map(([id, buf]) => ({
+                      id,
+                      type: 'function',
+                      function: { name: buf.name, arguments: buf.argsText || '{}' }
+                    }));
+                    assistantMessage.tool_calls = callsForMsg;
+                    // Push a single assistant message that can include any streamed text AND the tool calls
+                    if (!assistantMessagePushed) {
+                      this.messages.push(assistantMessage);
+                      assistantMessagePushed = true;
+                      this.saveState();
+                    } else {
+                      // Rare case: if we already pushed text earlier, update the last assistant message inline
+                      const last = this.messages.slice().reverse().find(m => m.role === 'assistant' && !m.tool_call_id);
+                      if (last) { last.tool_calls = callsForMsg; this.saveState(); }
+                    }
 
-                    // collect tool calls
+                    // Collect parsed args for local execution next
                     for (const [id, buf] of Object.entries(toolBuffers)) {
                       let args = {};
                       try {
