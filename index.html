@@ -5,7 +5,9 @@
     <title>Mini Stitch – AI Design Canvas (Vue2 + OpenAI)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-      [v-cloak] { display: none; }
+      [v-cloak] {
+        display: none;
+      }
       :root {
         --bg: #0b1220;
         --panel: #0f172a;
@@ -381,7 +383,7 @@
                       "Optional override of render mode for this box."
                   }
                 },
-                required: ["html"]
+                required: ["name", "html"]
               }
             }
           },
@@ -390,24 +392,26 @@
             function: {
               name: "edit_design",
               description:
-                "Modify an existing design by providing a new full HTML or a patch instruction.",
+                "Modify an existing design by providing its ID/name and the new full HTML.",
               parameters: {
                 type: "object",
                 properties: {
-                  id: { type: "string" },
-                  name: { type: "string", description: "Optional design name if id is unknown." },
+                  id: {
+                    type: "string",
+                    description: "The ID of the design to edit."
+                  },
+                  name: {
+                    type: "string",
+                    description:
+                      "The name of the design to edit (if ID is unknown)."
+                  },
                   new_html: {
                     type: "string",
                     description:
-                      "If provided, replace the entire HTML of the design."
-                  },
-                  instruction: {
-                    type: "string",
-                    description:
-                      "If new_html is not provided, a short instruction. Prefer using replace_string for surgical edits."
+                      "The new, complete HTML to replace the entire content of the design."
                   }
                 },
-                required: []
+                required: ["new_html"]
               }
             }
           },
@@ -416,12 +420,19 @@
             function: {
               name: "replace_string",
               description:
-                "Surgical edit: replace a substring in the HTML of a design.",
+                "Surgical edit: replace a substring in the HTML of a specific design.",
               parameters: {
                 type: "object",
                 properties: {
-                  id: { type: "string" },
-                  name: { type: "string", description: "Optional design name if id is unknown." },
+                  id: {
+                    type: "string",
+                    description: "The ID of the design to edit."
+                  },
+                  name: {
+                    type: "string",
+                    description:
+                      "The name of the design to edit (if ID is unknown)."
+                  },
                   old: { type: "string" },
                   new: { type: "string" },
                   occurrences: {
@@ -438,29 +449,36 @@
             type: "function",
             function: {
               name: "list_designs",
-              description: "List current designs to disambiguate IDs/names.",
+              description: "List current designs to find their ID and name.",
               parameters: { type: "object", properties: {} }
             }
           }
         ];
 
         const SYSTEM_PROMPT = `
-You act primarily via tools: create_design, edit_design, replace_string, list_designs.
-- Use create_design to make NEW designs. ALWAYS provide 'html' field with complete, non-empty, self-contained HTML markup (include inline <style> tags for styling). The html parameter is REQUIRED and must contain actual HTML elements, not an empty string.
-- Use edit_design ONLY to modify EXISTING designs. Provide 'id' and 'new_html' (full replacement HTML).
-- Use replace_string for small text/class/style tweaks to existing designs. Provide 'id', 'old', and 'new' strings.
-- Use list_designs to see all current designs and their IDs when unsure which to edit.
-- After successfully creating or editing a design, briefly confirm the action in chat.
-- If a tool result has an 'error', understand what went wrong and fix the arguments. Do not retry the exact same call that just failed.
-- Keep responses concise and action-oriented.
-- Do not put HTML in chat; never use code fences.
+You are a UI design assistant that creates HTML designs using the create_design tool.
+
+When the user asks to create a design, call create_design with complete HTML:
+{
+  "html": "<div style='padding:40px; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; border-radius:12px; text-align:center'><h1 style='margin:0'>Hello World</h1><p style='margin-top:10px; opacity:0.9'>This is a sample design</p></div>",
+  "name": "Sample Design"
+}
+
+The html parameter must contain complete, self-contained HTML with inline styles.
+
+For editing existing designs:
+- Use list_designs() to see all designs
+- Use replace_string to change specific text
+- Use edit_design to replace entire HTML
+
+After creating or editing, confirm the action in a brief chat message.
 `.trim();
 
         // Utilities
         const uid = () => Math.random().toString(36).slice(2, 10);
         const debounce = (fn, ms = 300) => {
           let t;
-          return function(...a) {
+          return function (...a) {
             const context = this;
             clearTimeout(t);
             t = setTimeout(() => fn.apply(context, a), ms);
@@ -510,7 +528,9 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
               }
               // For tool-only messages (e.g., assistant with only tool_calls), show indicator
               if (msg.tool_calls && msg.tool_calls.length > 0) {
-                const toolNames = msg.tool_calls.map(tc => tc.function?.name || 'unknown').join(', ');
+                const toolNames = msg.tool_calls
+                  .map(tc => tc.function?.name || "unknown")
+                  .join(", ");
                 return `[Calling tools: ${toolNames}]`;
               }
               // Empty message
@@ -579,16 +599,24 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
             getDesignByName(name) {
               if (!name) return null;
               const n = String(name).trim().toLowerCase();
-              return this.designs.find(d => (d.name || "").trim().toLowerCase() === n) || null;
+              return (
+                this.designs.find(
+                  d => (d.name || "").trim().toLowerCase() === n
+                ) || null
+              );
             },
             resolveDesignId(args) {
               // Priority: explicit id -> explicit name -> last active -> only design (if exactly 1)
-              if (args && typeof args.id === "string" && args.id.trim()) return args.id.trim();
+              if (args && typeof args.id === "string" && args.id.trim())
+                return args.id.trim();
               if (args && typeof args.name === "string") {
                 const byName = this.getDesignByName(args.name);
                 if (byName) return byName.id;
               }
-              if (this.lastActiveDesignId && this.getDesign(this.lastActiveDesignId)) {
+              if (
+                this.lastActiveDesignId &&
+                this.getDesign(this.lastActiveDesignId)
+              ) {
                 return this.lastActiveDesignId;
               }
               if (this.designs.length === 1) return this.designs[0].id;
@@ -743,32 +771,18 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
 
             // ===== OpenAI chat orchestration =====
             async send() {
-              console.log('[DEBUG] send() called', {
-                hasApiKey: !!this.apiKey,
-                apiKeyPrefix: this.apiKey ? this.apiKey.substring(0, 7) + '...' : 'none',
-                userInput: this.userInput,
-                isStreaming: this.isStreaming
-              });
-
               if (!this.apiKey) {
                 alert("Provide an OpenAI API key first.");
                 return;
               }
-
-              // Validate API key format
-              if (!this.apiKey.startsWith('sk-')) {
-                alert("Invalid API key format. OpenAI API keys should start with 'sk-'");
-                console.error('[ERROR] Invalid API key format');
+              if (!this.apiKey.startsWith("sk-")) {
+                alert(
+                  "Invalid API key format. OpenAI API keys should start with 'sk-'"
+                );
                 return;
               }
-
               const text = this.userInput.trim();
-              if (!text) {
-                console.log('[DEBUG] Empty user input after trim, returning');
-                return;
-              }
-
-              console.log('[DEBUG] Preparing to send message:', text);
+              if (!text) return;
 
               this.ensureSystemPrompt();
               this.messages.push({ _id: uid(), role: "user", content: text });
@@ -776,21 +790,22 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
 
               try {
                 this.isStreaming = true;
-                console.log('[DEBUG] Starting chat loop...');
                 await this.chatLoop();
-                console.log('[DEBUG] Chat loop completed successfully');
               } catch (e) {
-                if (e && (e.name === 'AbortError' || String(e).includes('AbortError'))) {
-                  // User pressed Stop – this is expected; no alert.
-                  console.debug('Streaming aborted by user.');
+                if (
+                  e &&
+                  (e.name === "AbortError" || String(e).includes("AbortError"))
+                ) {
+                  console.debug("Streaming aborted by user.");
                 } else {
-                  console.error('[ERROR] Request failed:', e);
+                  console.error("Request failed:", e);
                   let errorMsg = "Request failed. ";
-                  if (e.message && e.message.includes('Failed to fetch')) {
-                    errorMsg += "Network error - check your internet connection or CORS settings.";
-                  } else if (e.message && e.message.includes('401')) {
+                  if (e.message && e.message.includes("Failed to fetch")) {
+                    errorMsg +=
+                      "Network error - check your internet connection or CORS settings.";
+                  } else if (e.message && e.message.includes("401")) {
                     errorMsg += "Invalid API key.";
-                  } else if (e.message && e.message.includes('429')) {
+                  } else if (e.message && e.message.includes("429")) {
                     errorMsg += "Rate limit exceeded.";
                   } else {
                     errorMsg += "See console for details.";
@@ -802,7 +817,6 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 this.assistantStreamingText = "";
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
-                console.log('[DEBUG] send() finished, streaming stopped');
               }
             },
             stop() {
@@ -810,54 +824,37 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
             },
 
             async chatLoop() {
-              // Continue streaming/acting until the assistant stops calling tools
-              console.log('[DEBUG] chatLoop() started');
-
-              // Ensure _streamLoopGuard is a valid number
-              if (typeof this._streamLoopGuard !== 'number' || isNaN(this._streamLoopGuard)) {
-                console.error('[ERROR] _streamLoopGuard is not a number:', this._streamLoopGuard);
+              if (
+                typeof this._streamLoopGuard !== "number" ||
+                isNaN(this._streamLoopGuard)
+              ) {
                 this._streamLoopGuard = 0;
               }
 
               let continueLoop = true;
               let loopGuard = ++this._streamLoopGuard;
               let iteration = 0;
-              // require at least one tool call on the first pass
-              let requireToolThisTurn = true;
-              const MAX_TOOL_ROUNDS = 6; // hard stop to avoid infinite loops
-
-              console.log('[DEBUG] Loop guard check:', {
-                continueLoop,
-                loopGuard,
-                streamLoopGuard: this._streamLoopGuard,
-                matches: loopGuard === this._streamLoopGuard
-              });
+              let requireToolThisTurn = false; // Don't force tools - let model decide when ready
+              const MAX_TOOL_ROUNDS = 6;
 
               while (continueLoop && loopGuard === this._streamLoopGuard) {
                 iteration++;
                 if (iteration > MAX_TOOL_ROUNDS) {
-                  console.warn('[DEBUG] Max tool rounds reached; aborting turn.');
+                  console.warn("Max tool rounds reached; aborting turn.");
                   break;
                 }
-                console.log(`[DEBUG] chatLoop iteration ${iteration}`);
-                const result = await this.streamOnce({ toolChoice: requireToolThisTurn ? "required" : "auto" });
-                console.log(`[DEBUG] streamOnce() returned:`, {
-                  hasToolCalls: !!(result.toolCalls && result.toolCalls.length),
-                  toolCallCount: result.toolCalls?.length || 0
+                const result = await this.streamOnce({
+                  toolChoice: requireToolThisTurn ? "required" : "auto"
                 });
 
                 if (result.toolCalls && result.toolCalls.length) {
-                  // Only relax "required" when we actually applied a change (create/edit/replace) successfully.
-                  let mutationSucceeded = false; // flips true when a non-error mutation occurs
-                  // execute each tool call and append tool results
+                  let mutationSucceeded = false;
                   for (const call of result.toolCalls) {
-                    console.log(`[DEBUG] Executing tool: ${call.name}`);
                     const toolResult = await this.executeToolCall(
                       call.name,
                       call.args,
                       call.id
                     );
-                    console.log(`[DEBUG] Tool ${call.name} result:`, toolResult);
                     this.messages.push({
                       _id: uid(),
                       role: "tool",
@@ -866,27 +863,25 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                       content: JSON.stringify(toolResult)
                     });
                     // Count ANY successful tool call as progress (not just mutations)
-                    // This allows list_designs and other info-gathering tools to count as progress
+                    // This prevents infinite loops when model uses list_designs or other info tools
                     if (toolResult && !toolResult.error) {
                       mutationSucceeded = true;
                     }
                   }
-                  // After ANY successful tool call, allow model to respond freely (not force tools)
-                  requireToolThisTurn = mutationSucceeded ? false : true;
-                  // loop will continue to allow the model to respond to tool results (e.g., call a follow-up tool)
+                  // NEVER force tools - always let model decide
+                  // This allows the model to respond with text after errors instead of being stuck in a tool-calling loop
+                  requireToolThisTurn = false;
                   continueLoop = true;
                 } else {
-                  console.log('[DEBUG] No tool calls, ending chat loop');
                   continueLoop = false;
                 }
               }
-              console.log('[DEBUG] chatLoop() finished');
             },
 
             async streamOnce(opts = {}) {
-              console.log('[DEBUG] streamOnce() started');
               this.assistantStreamingText = "";
               const toolBuffers = {}; // id -> { name, argsText }
+              const indexToId = {}; // Map tool call index to its id
               const toolCalls = [];
               let assistantMessagePushed = false;
               let assistantMessage = {
@@ -895,7 +890,6 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 content: ""
               };
 
-              // Prepare request
               const url = "https://api.openai.com/v1/chat/completions";
               const headers = {
                 "Content-Type": "application/json",
@@ -906,12 +900,12 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 model: this.model,
                 stream: true,
                 messages: this.messages.map(m => {
-                  // Preserve tool_calls on assistant messages so tool results can attach correctly.
                   const { role, content, name, tool_call_id, tool_calls } = m;
                   const out = { role };
                   if (content !== undefined) out.content = content;
                   if (name !== undefined) out.name = name;
-                  if (tool_call_id !== undefined) out.tool_call_id = tool_call_id;
+                  if (tool_call_id !== undefined)
+                    out.tool_call_id = tool_call_id;
                   if (tool_calls !== undefined) out.tool_calls = tool_calls;
                   return out;
                 }),
@@ -920,15 +914,20 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 tool_choice: opts.toolChoice || "auto"
               };
 
-              console.log('[DEBUG] Making fetch request to OpenAI:', {
-                url,
-                model: this.model,
+              // DEBUG: Log the full request to see what we're sending to OpenAI
+              console.log("[REQUEST] Sending to OpenAI:", {
+                model: requestPayload.model,
+                tool_choice: requestPayload.tool_choice,
                 messageCount: requestPayload.messages.length,
-                hasTools: !!TOOLS_SPEC.length
+                lastThreeMessages: requestPayload.messages.slice(-3).map(m => ({
+                  role: m.role,
+                  contentPreview: m.content ? m.content.substring(0, 100) : '(no content)',
+                  hasToolCalls: !!m.tool_calls,
+                  name: m.name
+                }))
               });
 
               const body = JSON.stringify(requestPayload);
-
               const controller = new AbortController();
               this._abortController = controller;
 
@@ -940,19 +939,14 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                   body,
                   signal: controller.signal
                 });
-                console.log('[DEBUG] Fetch response received:', {
-                  status: res.status,
-                  ok: res.ok,
-                  hasBody: !!res.body
-                });
               } catch (fetchError) {
-                console.error('[ERROR] Fetch failed:', fetchError);
+                console.error("Fetch failed:", fetchError);
                 throw fetchError;
               }
 
               if (!res.ok || !res.body) {
                 const err = await res.text().catch(() => String(res.status));
-                console.error('[ERROR] OpenAI API error:', {
+                console.error("OpenAI API error:", {
                   status: res.status,
                   statusText: res.statusText,
                   errorBody: err
@@ -960,22 +954,19 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 throw new Error("OpenAI error: " + err);
               }
 
-              console.log('[DEBUG] Starting to read stream...');
-
               const reader = res.body.getReader();
               const decoder = new TextDecoder();
-
-              // SSE line buffer
               let buffer = "";
 
               const pushAssistantIfNeeded = () => {
                 if (
                   !assistantMessagePushed &&
-                  assistantMessage.content.trim()
+                  (assistantMessage.content.trim() ||
+                    (assistantMessage.tool_calls &&
+                      assistantMessage.tool_calls.length > 0))
                 ) {
                   this.messages.push(assistantMessage);
                   assistantMessagePushed = true;
-                  // keep streaming text separate (for live view) but also keep final message
                 }
               };
 
@@ -984,9 +975,8 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 if (done) break;
                 buffer += decoder.decode(value, { stream: true });
 
-                // split into SSE events
                 const lines = buffer.split("\n");
-                buffer = lines.pop(); // keep tail (possibly incomplete)
+                buffer = lines.pop();
 
                 for (const line of lines) {
                   const trimmed = line.trim();
@@ -1006,35 +996,48 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                   const delta = choice.delta || {};
                   const finish = choice.finish_reason;
 
-                  // Text content delta
                   if (delta.content) {
                     assistantMessage.content += delta.content;
                     this.assistantStreamingText += delta.content;
                     this.scrollChatToEndSoon();
                   }
 
-                  // Tool call deltas
                   if (Array.isArray(delta.tool_calls)) {
                     for (const t of delta.tool_calls) {
-                      if (!toolBuffers[t.id]) {
-                        toolBuffers[t.id] = {
+                      console.log('[STREAM DELTA] tool_call chunk:', JSON.stringify(t));
+
+                      // Track index->id mapping when id first appears
+                      if (t.id && t.index !== undefined) {
+                        indexToId[t.index] = t.id;
+                      }
+
+                      // Use the tracked id for this index, or the id from this chunk
+                      const toolId = indexToId[t.index] || t.id;
+
+                      if (!toolId) {
+                        console.warn('[STREAM DELTA] No id available for index', t.index);
+                        continue;
+                      }
+
+                      if (!toolBuffers[toolId]) {
+                        toolBuffers[toolId] = {
+                          id: toolId,
                           name: t.function?.name || "",
                           argsText: ""
                         };
                       }
+
                       if (t.function?.name)
-                        toolBuffers[t.id].name = t.function.name;
-                      // As soon as we know it's a create_design tool call, bring up the preview if missing
-                      if (toolBuffers[t.id].name === "create_design") {
+                        toolBuffers[toolId].name = t.function.name;
+                      if (toolBuffers[toolId].name === "create_design") {
                         this.ensurePreviewBox();
                       }
                       if (t.function?.arguments) {
-                        toolBuffers[t.id].argsText += t.function.arguments;
-
-                        // Optional: preview while create_design args stream in
-                        if (toolBuffers[t.id].name === "create_design") {
+                        console.log('[STREAM DELTA] Appending arguments chunk:', t.function.arguments);
+                        toolBuffers[toolId].argsText += t.function.arguments;
+                        if (toolBuffers[toolId].name === "create_design") {
                           const partialHtml = this.extractPartialJsonString(
-                            toolBuffers[t.id].argsText,
+                            toolBuffers[toolId].argsText,
                             "html"
                           );
                           if (partialHtml) this.updatePreviewHtml(partialHtml);
@@ -1043,62 +1046,71 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                     }
                   }
 
-                  // Finish: tool_calls -> record assistant message with tool_calls, then execute tools
                   if (finish === "tool_calls") {
-                    // Build the assistant's tool_calls message (arguments stay as a JSON string per API)
-                    // Filter out tool calls with empty or missing names (incomplete streaming chunks)
                     const callsForMsg = Object.entries(toolBuffers)
-                      .filter(([id, buf]) => buf.name && buf.name.trim())
-                      .map(([id, buf]) => ({
-                        id,
-                        type: 'function',
-                        function: { name: buf.name, arguments: buf.argsText || '{}' }
+                      .filter(([key, buf]) => buf.name && buf.name.trim() && buf.id)
+                      .map(([key, buf]) => ({
+                        id: buf.id,
+                        type: "function",
+                        function: {
+                          name: buf.name,
+                          arguments: buf.argsText || "{}"
+                        }
                       }));
 
                     if (callsForMsg.length > 0) {
                       assistantMessage.tool_calls = callsForMsg;
-                      // Push a single assistant message that can include any streamed text AND the tool calls
-                      if (!assistantMessagePushed) {
-                        this.messages.push(assistantMessage);
-                        assistantMessagePushed = true;
-                      } else {
-                        // Rare case: if we already pushed text earlier, update the last assistant message inline
-                        const last = this.messages.slice().reverse().find(m => m.role === 'assistant' && !m.tool_call_id);
-                        if (last) { last.tool_calls = callsForMsg; }
-                      }
                     }
 
-                    // Collect parsed args for local execution next
-                    for (const [id, buf] of Object.entries(toolBuffers)) {
-                      // Skip tool calls without valid names
+                    for (const [key, buf] of Object.entries(toolBuffers)) {
                       if (!buf.name || !buf.name.trim()) {
-                        console.warn('[DEBUG] Skipping tool call with empty name:', id);
+                        console.warn("Skipping tool call with empty name:", key);
+                        continue;
+                      }
+                      if (!buf.id) {
+                        console.warn("Skipping tool call without id:", key);
                         continue;
                       }
 
+                      // DEBUG: Log what OpenAI actually sent
+                      console.log(
+                        `[STREAM] Tool: ${buf.name}, argsText length: ${buf.argsText.length}`
+                      );
+                      console.log(`[STREAM] argsText content: ${buf.argsText}`);
+
                       let args = {};
                       try {
-                        args = JSON.parse(buf.argsText);
-                      } catch {
-                        // best-effort parse; we already previewed if possible
+                        args = JSON.parse(buf.argsText || "{}");
+                        console.log("[STREAM] Parsed args:", args);
+                      } catch (e) {
+                        console.warn(
+                          "Failed to parse tool args JSON, using fallback extraction:",
+                          buf.argsText.substring(0, 100)
+                        );
+                        // Fallback: try to extract partial JSON fields
                         try {
                           const html = this.extractPartialJsonString(
                             buf.argsText,
                             "html"
                           );
                           if (html) args.html = html;
-                        } catch {}
+                          const name = this.extractPartialJsonString(
+                            buf.argsText,
+                            "name"
+                          );
+                          if (name) args.name = name;
+                        } catch (extractError) {
+                          console.warn(
+                            "Partial extraction also failed, using empty args"
+                          );
+                        }
                       }
-                      toolCalls.push({ id, name: buf.name, args });
+                      toolCalls.push({ id: buf.id, name: buf.name, args });
                     }
                   }
                 }
               }
-
-              // End of stream
-              // finalize assistant text bubble
               pushAssistantIfNeeded();
-
               return { toolCalls };
             },
 
@@ -1119,29 +1131,25 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
             },
 
             tool_create_design(args) {
+              console.log("[CREATE_DESIGN] Called with args:", args);
+
+              // STRICT VALIDATION: Return error if html is missing or empty
+              // This forces the model to retry with proper HTML
+              let html = typeof args.html === "string" ? args.html.trim() : "";
+              console.log("[CREATE_DESIGN] HTML length:", html.length);
+
+              if (!html) {
+                console.error(
+                  "[CREATE_DESIGN] ERROR: html parameter is required but was empty/missing"
+                );
+                return {
+                  error: "missing_html",
+                  message:
+                    "CRITICAL: The 'html' parameter is REQUIRED and must contain actual HTML markup. You called create_design with empty or missing html. Example of correct call: create_design({html: \"<div style='padding:20px'>Hello World</div>\", name: \"MyDesign\"}). Please retry with proper HTML content."
+                };
+              }
+
               const id = uid();
-              // Prefer tool arg HTML; fall back to the last live preview or current preview box
-              let html = typeof args.html === "string" ? args.html : "";
-              if (!html.trim()) {
-                if (this.previewLastHtml && this.previewLastHtml.trim()) {
-                  html = this.previewLastHtml;
-                } else {
-                  const preview = this.getDesign(this.previewBoxId);
-                  if (preview && typeof preview.html === "string" && preview.html.trim()) {
-                    // Don't use preview if it's just the placeholder text
-                    if (!preview.html.includes("Generating preview")) {
-                      html = preview.html;
-                    }
-                  }
-                }
-              }
-              // GRACEFUL DEGRADATION: If still empty, create placeholder design instead of failing
-              if (!html.trim()) {
-                html = '<div style="padding:32px;font:14px system-ui;color:#94a3b8;text-align:center;background:#0f172a;border-radius:8px;height:100%;display:flex;align-items:center;justify-content:center">' +
-                       '<div><h3 style="margin:0 0 12px;font-size:18px;color:#e5e7eb">Design Created</h3>' +
-                       '<p style="margin:0;opacity:0.7;font-size:13px">Ask me to add content or edit this design</p></div>' +
-                       '</div>';
-              }
               const d = {
                 id,
                 name: (args.name || "Untitled").toString().slice(0, 80),
@@ -1156,7 +1164,6 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 renderMode: args.renderMode || this.renderModeDefault
               };
 
-              // If a preview exists, replace it with the committed design (keeps position)
               const previewIdx = this.designs.findIndex(
                 x => x.id === this.previewBoxId
               );
@@ -1168,22 +1175,48 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 d.height = preview.height;
                 d.z = preview.z;
                 this.designs.splice(previewIdx, 1, d);
+                console.log(
+                  "[CREATE_DESIGN] Replaced preview box with design, id:",
+                  d.id
+                );
               } else {
                 this.designs.push(d);
+                console.log(
+                  "[CREATE_DESIGN] Added new design to array, id:",
+                  d.id
+                );
               }
 
+              console.log(
+                "[CREATE_DESIGN] Total designs now:",
+                this.designs.length
+              );
+              console.log("[CREATE_DESIGN] Calling renderDesign...");
               this.$nextTick(() => this.renderDesign(d));
-              // consume the remembered preview so it won't leak into the next create
               this.previewLastHtml = "";
               this.lastActiveDesignId = d.id;
-              this.lastCreatedDesignId = d.id;
+              console.log("[CREATE_DESIGN] Returning success:", {
+                id: d.id,
+                name: d.name
+              });
               return { id: d.id, name: d.name };
             },
 
             tool_edit_design(args) {
               const resolvedId = this.resolveDesignId(args);
-              const d = resolvedId ? this.getDesign(resolvedId) : null;
-              if (!d) return { error: "Design not found: " + args.id };
+              if (!resolvedId) {
+                return {
+                  error: "design_not_found",
+                  message:
+                    "You must specify the 'id' or 'name' of the design to modify. Use list_designs() if you are unsure."
+                };
+              }
+              const d = this.getDesign(resolvedId);
+              if (!d)
+                return {
+                  error: "Design not found with resolved id: " + resolvedId
+                };
+
               if (typeof args.new_html === "string" && args.new_html.trim()) {
                 d.html = args.new_html;
                 d.updatedAt = Date.now();
@@ -1192,50 +1225,35 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                 return { id: d.id, status: "updated" };
               }
 
-              // Optional lightweight heuristic when only instruction is provided
-              const inst = (args.instruction || "").toLowerCase().trim();
-              if (!inst) {
-                return {
-                  error: "missing_parameters",
-                  message: "edit_design requires 'new_html' (full HTML) or use replace_string for text changes.",
-                  id: d.id
-                };
-              }
-
-              // Heuristic: instruction like  replace: "old" -> "new"
-              const m = inst.match(/replace\s*:\s*"(.*)"\s*->\s*"(.*)"/i);
-              if (m) {
-                const oldS = m[1],
-                  newS = m[2];
-                const countBefore = (
-                  d.html.match(new RegExp(escapeRegExp(oldS), "g")) || []
-                ).length;
-                d.html = d.html.replace(
-                  new RegExp(escapeRegExp(oldS), "g"),
-                  newS
-                );
-                const replaced = countBefore;
-                d.updatedAt = Date.now();
-                this.$nextTick(() => this.renderDesign(d));
-                return { id: d.id, replaced };
-              }
-
-              // Otherwise ask the model to send full new_html
               return {
-                error: "invalid_instruction",
-                message: "Instruction unclear. Please call edit_design with 'new_html' or use replace_string for specific text changes.",
+                error: "missing_parameters",
+                message:
+                  "edit_design requires the 'new_html' parameter with the full HTML content.",
                 id: d.id
               };
             },
 
             tool_replace_string(args) {
               const resolvedId = this.resolveDesignId(args);
-              const d = resolvedId ? this.getDesign(resolvedId) : null;
-              if (!d) return { error: "Design not found: " + args.id };
+              if (!resolvedId) {
+                return {
+                  error: "design_not_found",
+                  message:
+                    "You must specify the 'id' or 'name' of the design to modify. Use list_designs() if you are unsure."
+                };
+              }
+              const d = this.getDesign(resolvedId);
+              if (!d)
+                return {
+                  error: "Design not found with resolved id: " + resolvedId
+                };
 
               const oldS = String(args.old || "");
               const newS = String(args.new || "");
-              if (!oldS) return { error: "old string is empty" };
+              if (!oldS)
+                return {
+                  error: "The 'old' string to be replaced cannot be empty."
+                };
 
               let replacedCount = 0;
               if (args.occurrences === "first") {
@@ -1273,13 +1291,11 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
 
             // ===== Preview helpers =====
             extractPartialJsonString(buf, field) {
-              // Tolerant extractor for a JSON string field (e.g., "html": "...")
               const key = `"${field}"`;
               const k = buf.indexOf(key);
               if (k === -1) return null;
               let i = buf.indexOf(":", k);
               if (i === -1) return null;
-              // skip whitespace
               while (i + 1 < buf.length && /\s/.test(buf[i + 1])) i++;
               if (buf[i + 1] !== '"') return null;
               let j = i + 2,
@@ -1298,11 +1314,9 @@ You act primarily via tools: create_design, edit_design, replace_string, list_de
                   if (ch === "\\") esc = true;
                   else if (ch === '"') {
                     break;
-                  } // closed
-                  else out += ch;
+                  } else out += ch;
                 }
               }
-              // Even if not closed yet we can preview partial content
               return out;
             },
 
