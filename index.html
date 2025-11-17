@@ -229,6 +229,45 @@
         border: 1px solid var(--border);
         color: var(--muted);
       }
+
+      /* Attachments (used in chat bubbles and composer) */
+      .attachments {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .thumb {
+        position: relative;
+        width: 64px;
+        height: 64px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #0b1220;
+      }
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .thumb .remove {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #111827;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      .input .attachments { grid-column: 1 / -1; }
     </style>
 
     <!-- CDN libs -->
@@ -292,6 +331,13 @@
                 {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
               </div>
               <div>{{ displayContent(msg) }}</div>
+              <!-- Show image attachments inside the bubble when present -->
+              <div v-if="msg.images && msg.images.length" class="attachments">
+                <div
+                  class="thumb"
+                  v-for="(img, i) in msg.images"
+                  :key="img.id || i"><img :src="img.dataUrl" :alt="'attachment ' + (i + 1)" /></div>
+              </div>
             </div>
           </template>
           <div v-if="assistantStreamingText" class="bubble assistant">
@@ -301,11 +347,23 @@
         </div>
 
         <div class="input">
+          <!-- Pasted image thumbnails (composer) -->
+          <div
+            class="attachments"
+            v-if="inputImages.length"
+            style="grid-column: 1 / -1"
+          >
+            <div class="thumb" v-for="img in inputImages" :key="img.id">
+              <img :src="img.dataUrl" :alt="img.filename || 'image attachment'" />
+              <button class="remove" @click="removeInputImage(img.id)" title="Remove">✕</button>
+            </div>
+          </div>
           <input
             v-model="userInput"
             :disabled="isStreaming"
             @keydown.enter="send"
-            placeholder="Describe a design or an edit…"
+            @paste="onPaste"
+            placeholder="Describe a design or paste an image (Ctrl/Cmd+V)…"
           />
           <div style="display: flex; gap: 8px">
             <button class="btn" @click="stop" :disabled="!isStreaming">
@@ -314,7 +372,7 @@
             <button
               class="btn primary"
               @click="send"
-              :disabled="!apiKey || !userInput || isStreaming"
+              :disabled="!apiKey || (!userInput && !inputImages.length) || isStreaming"
             >
               Send
             </button>
@@ -512,6 +570,7 @@ After creating or editing, confirm the action in a brief chat message.
               localStorage.getItem("mini-stitch:renderModeDefault") || "shadow",
             isStreaming: false,
             userInput: "",
+            inputImages: [], // queued images for next user message
             assistantStreamingText: "",
             messages: [],
             designs: [],
@@ -566,9 +625,18 @@ After creating or editing, confirm the action in a brief chat message.
             },
             saveState: debounce(function () {
               try {
+                // IMPORTANT: Do NOT persist base64 images in chat history; they easily exceed localStorage.
+                const messagesToSave = this.messages.map(m => {
+                  const copy = Object.assign({}, m);
+                  if (copy.images) {
+                    // Drop images on persistence to keep storage small.
+                    delete copy.images;
+                  }
+                  return copy;
+                });
                 localStorage.setItem(
                   "mini-stitch:messages",
-                  JSON.stringify(this.messages)
+                  JSON.stringify(messagesToSave)
                 );
                 localStorage.setItem(
                   "mini-stitch:designs",
@@ -843,6 +911,81 @@ After creating or editing, confirm the action in a brief chat message.
             },
 
             // ===== OpenAI chat orchestration =====
+
+            // Handle clipboard images ------------------------------------------------
+            async onPaste(e) {
+              try {
+                const items = Array.from(e.clipboardData?.items || []);
+                const imageItems = items.filter(
+                  it => it.kind === "file" && it.type && it.type.startsWith("image/")
+                );
+                if (!imageItems.length) return; // let normal text paste happen
+                e.preventDefault();
+
+                // API limit: up to 10 images per request (keep composer aligned)
+                const remaining = Math.max(0, 10 - this.inputImages.length);
+                for (const it of imageItems.slice(0, remaining)) {
+                  const file = it.getAsFile();
+                  if (file) await this.addInputImageFromFile(file);
+                }
+              } catch (err) {
+                console.warn("Paste handling failed:", err);
+              }
+            },
+
+            async addInputImageFromFile(file) {
+              const processed = await this.downscaleImage(file, 1600);
+              if (!processed) return;
+              this.inputImages.push({
+                id: uid(),
+                filename: file.name || "",
+                ...processed
+              });
+            },
+
+            // Downscale & JPEG‑encode to keep payloads small
+            downscaleImage(file, maxDim = 1600) {
+              return new Promise(resolve => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                  let w = img.naturalWidth || img.width || 1;
+                  let h = img.naturalHeight || img.height || 1;
+                  const scale = Math.min(1, maxDim / Math.max(w, h));
+                  const nw = Math.max(1, Math.round(w * scale));
+                  const nh = Math.max(1, Math.round(h * scale));
+                  const canvas = document.createElement("canvas");
+                  canvas.width = nw;
+                  canvas.height = nh;
+                  const ctx = canvas.getContext("2d");
+                  ctx.drawImage(img, 0, 0, nw, nh);
+                  // Prefer JPEG for size; quality tuned for legibility
+                  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+                  const sizeBytes = Math.ceil(
+                    (dataUrl.length - (dataUrl.indexOf(",") + 1)) * 3 / 4
+                  );
+                  URL.revokeObjectURL(url);
+                  resolve({
+                    dataUrl,
+                    mime: "image/jpeg",
+                    width: nw,
+                    height: nh,
+                    sizeBytes
+                  });
+                };
+                img.onerror = () => {
+                  URL.revokeObjectURL(url);
+                  resolve(null);
+                };
+                img.src = url;
+              });
+            },
+
+            removeInputImage(id) {
+              const idx = this.inputImages.findIndex(x => x.id === id);
+              if (idx >= 0) this.inputImages.splice(idx, 1);
+            },
+
             async send() {
               if (!this.apiKey) {
                 alert("Provide an OpenAI API key first.");
@@ -855,11 +998,24 @@ After creating or editing, confirm the action in a brief chat message.
                 return;
               }
               const text = this.userInput.trim();
-              if (!text) return;
+              const hasImages = this.inputImages && this.inputImages.length > 0;
+              if (!text && !hasImages) return;
 
               this.ensureSystemPrompt();
-              this.messages.push({ _id: uid(), role: "user", content: text });
+              const userMsg = { _id: uid(), role: "user", content: text };
+              if (hasImages) {
+                userMsg.images = this.inputImages.map(img => ({
+                  id: img.id,
+                  dataUrl: img.dataUrl,
+                  mime: img.mime,
+                  width: img.width,
+                  height: img.height,
+                  sizeBytes: img.sizeBytes
+                }));
+              }
+              this.messages.push(userMsg);
               this.userInput = "";
+              this.inputImages = [];
 
               try {
                 this.isStreaming = true;
@@ -979,7 +1135,23 @@ After creating or editing, confirm the action in a brief chat message.
                 messages: this.messages.map(m => {
                   const { role, content, name, tool_call_id, tool_calls } = m;
                   const out = { role };
-                  if (content !== undefined) out.content = content;
+
+                  // If user message has images, build a multimodal content array
+                  if (role === "user" && Array.isArray(m.images) && m.images.length > 0) {
+                    const parts = [];
+                    if (typeof content === "string" && content.trim()) {
+                      parts.push({ type: "text", text: content });
+                    }
+                    for (const img of m.images) {
+                      parts.push({
+                        type: "image_url",
+                        image_url: { url: img.dataUrl } // 'detail' defaults to 'auto'
+                      });
+                    }
+                    out.content = parts;
+                  } else if (content !== undefined) {
+                    out.content = content;
+                  }
                   if (name !== undefined) out.name = name;
                   if (tool_call_id !== undefined)
                     out.tool_call_id = tool_call_id;
@@ -998,7 +1170,11 @@ After creating or editing, confirm the action in a brief chat message.
                 lastThreeMessages: requestPayload.messages.slice(-3).map(m => ({
                   role: m.role,
                   contentPreview: m.content
-                    ? m.content.substring(0, 100)
+                    ? (typeof m.content === "string"
+                        ? m.content.substring(0, 100)
+                        : Array.isArray(m.content)
+                          ? `[multimodal: ${m.content.length} parts]`
+                          : "(complex content)")
                     : "(no content)",
                   hasToolCalls: !!m.tool_calls,
                   name: m.name
