@@ -570,6 +570,56 @@
         height: 24px;
       }
 
+      .bubble {
+        position: relative; /* For absolute positioning of edit button */
+      }
+      .bubble:hover .edit-btn {
+        opacity: 1;
+      }
+      .edit-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        opacity: 0;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        border-radius: 4px;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .edit-btn:hover {
+        color: var(--text);
+        border-color: var(--accent);
+      }
+      .edit-mode textarea {
+        width: 100%;
+        background: var(--input-bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 8px;
+        font-family: inherit;
+        font-size: inherit;
+        resize: vertical;
+        min-height: 60px;
+        outline: none;
+        margin-bottom: 8px;
+      }
+      .edit-mode textarea:focus {
+        border-color: var(--accent);
+      }
+      .edit-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
       .resizer {
         position: absolute;
         right: 0;
@@ -651,12 +701,40 @@
               <div class="role">
                 {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
               </div>
-              <div v-html="displayContent(msg)"></div>
-              <div v-if="msg.images && msg.images.length" class="attachments">
-                <div
-                  class="thumb"
-                  v-for="(img, i) in msg.images"
-                  :key="img.id || i"><img :src="img.dataUrl" :alt="'attachment ' + (i + 1)" /></div>
+              
+              <!-- Normal View -->
+              <div v-if="editingMessageId !== msg._id">
+                <div v-html="displayContent(msg)"></div>
+                <div v-if="msg.images && msg.images.length" class="attachments">
+                  <div
+                    class="thumb"
+                    v-for="(img, i) in msg.images"
+                    :key="img.id || i"><img :src="img.dataUrl" :alt="'attachment ' + (i + 1)" /></div>
+                </div>
+                <!-- Edit Button (User only) -->
+                <button 
+                  v-if="msg.role === 'user'" 
+                  class="edit-btn" 
+                  @click="startEdit(msg)" 
+                  title="Edit message"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                </button>
+              </div>
+
+              <!-- Edit Mode -->
+              <div v-else class="edit-mode">
+                <textarea 
+                  :ref="'edit-' + msg._id"
+                  v-model="editContent" 
+                  @keydown.enter.exact.prevent
+                  @keydown.enter.exact="submitEdit(msg)"
+                  @keydown.esc="cancelEdit"
+                ></textarea>
+                <div class="edit-actions">
+                  <button class="btn small" @click="cancelEdit">Cancel</button>
+                  <button class="btn primary small" @click="submitEdit(msg)">Save & Send</button>
+                </div>
               </div>
             </div>
           </template>
@@ -943,7 +1021,10 @@ After creating or editing, confirm the action in a brief chat message.
             // keep the latest preview HTML so we can commit even if the tool args omit `html`
             previewLastHtml: "",
             // track last active design to resolve ambiguous edits
-            lastActiveDesignId: null
+            lastActiveDesignId: null,
+            // Message editing
+            editingMessageId: null,
+            editContent: ""
           }),
           created() {
             // initial system prompt
@@ -967,6 +1048,50 @@ After creating or editing, confirm the action in a brief chat message.
             );
           },
           methods: {
+            // ===== Message Editing =====
+            startEdit(msg) {
+              this.editingMessageId = msg._id;
+              this.editContent = msg.content;
+              this.$nextTick(() => {
+                const ta = this.$refs['edit-' + msg._id];
+                if (ta && ta[0]) ta[0].focus();
+              });
+            },
+            cancelEdit() {
+              this.editingMessageId = null;
+              this.editContent = "";
+            },
+            async submitEdit(msg) {
+              if (!this.editContent.trim()) return;
+              
+              const idx = this.messages.findIndex(m => m._id === msg._id);
+              if (idx === -1) return;
+
+              // Truncate history to this message
+              this.messages = this.messages.slice(0, idx + 1);
+              
+              // Update content
+              this.messages[idx].content = this.editContent;
+              this.messages[idx].images = []; // Clear images on edit for simplicity, or keep them? Let's clear to avoid stale context.
+              
+              this.editingMessageId = null;
+              this.editContent = "";
+
+              // Restart generation
+              try {
+                this.isStreaming = true;
+                await this.chatLoop();
+              } catch (e) {
+                console.error(e);
+                alert("Failed to regenerate response.");
+              } finally {
+                this.isStreaming = false;
+                this.assistantStreamingText = "";
+                this.clearPreview();
+                this._abortController = null;
+              }
+            },
+
             startResize() {
               this.isResizing = true;
               document.body.style.cursor = 'col-resize';
