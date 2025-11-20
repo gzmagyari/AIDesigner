@@ -525,6 +525,51 @@
         margin-top: 8px;
       }
 
+      .box-code {
+        position: absolute;
+        inset: 40px 0 0 0;
+        background: #1e1e1e;
+        display: flex;
+        flex-direction: column;
+        z-index: 10;
+      }
+      .box-code textarea {
+        flex: 1;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border: none;
+        padding: 10px;
+        font-family: monospace;
+        font-size: 12px;
+        resize: none;
+        outline: none;
+      }
+      .code-actions {
+        padding: 8px;
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+        text-align: right;
+      }
+      .box-toolbar .actions.left {
+        margin-right: auto;
+        display: flex;
+        gap: 4px;
+      }
+      .box-toolbar .sep {
+        width: 1px;
+        background: var(--border);
+        margin: 0 4px;
+      }
+      .box-toolbar button.active {
+        color: var(--accent);
+        background: rgba(59, 130, 246, 0.1);
+      }
+      .btn.small {
+        padding: 4px 12px;
+        font-size: 11px;
+        height: 24px;
+      }
+
       .resizer {
         position: absolute;
         right: 0;
@@ -585,6 +630,10 @@
                 <option value="shadow">Shadow DOM (recommended)</option>
                 <option value="iframe">Sandboxed iframe (fallback)</option>
               </select>
+            </label>
+            <label>
+              <small>Global Head HTML (e.g. Tailwind CDN, Fonts)</small>
+              <textarea v-model.lazy="globalHeadHtml" placeholder='<script src="..."></script>' rows="3" style="font-family:monospace; font-size:11px"></textarea>
             </label>
             <button class="btn primary full" @click="showSettings = false">Done</button>
           </div>
@@ -692,10 +741,24 @@
             @mousedown="bringToFront(d.id)"
           >
             <div class="box-toolbar">
+              <span class="actions left">
+                 <button title="Undo" @click.stop="undo(d.id)" :disabled="!d.history || d.historyIndex <= 0">↶</button>
+                 <button title="Redo" @click.stop="redo(d.id)" :disabled="!d.history || d.historyIndex >= (d.history.length - 1)">↷</button>
+                 <span class="sep"></span>
+                 <button title="Mobile (375px)" @click.stop="setViewport(d.id, 375)">📱</button>
+                 <button title="Tablet (768px)" @click.stop="setViewport(d.id, 768)">💊</button>
+                 <button title="Desktop (100%)" @click.stop="setViewport(d.id, 1200)">💻</button>
+              </span>
               <span class="title" @dblclick="renameDesign(d.id)"
                 >{{ d.name || d.id }}</span
               >
               <span class="actions">
+                <button title="Code View" @click.stop="toggleCodeView(d.id)" :class="{active: d.showCode}">
+                  &lt;/&gt;
+                </button>
+                <button title="Duplicate" @click.stop="duplicateDesign(d.id)">
+                  ❐
+                </button>
                 <button title="Maximize" @click.stop="toggleFullscreen(d.id)">
                   ⧉
                 </button>
@@ -707,7 +770,13 @@
                 </button>
               </span>
             </div>
-            <div class="box-content" :ref="'box-' + d.id"></div>
+            <div class="box-content" :ref="'box-' + d.id" v-show="!d.showCode"></div>
+            <div class="box-code" v-if="d.showCode">
+               <textarea v-model="d.editHtml" placeholder="HTML code..."></textarea>
+               <div class="code-actions">
+                 <button class="btn primary small" @click="applyCodeEdit(d.id)">Apply Changes</button>
+               </div>
+            </div>
           </div>
         </div>
       </section>
@@ -859,6 +928,7 @@ After creating or editing, confirm the action in a brief chat message.
             model: localStorage.getItem("mini-stitch:model") || "gpt-4.1",
             renderModeDefault:
               localStorage.getItem("mini-stitch:renderModeDefault") || "shadow",
+            globalHeadHtml: localStorage.getItem("mini-stitch:globalHeadHtml") || '<script src="https://cdn.tailwindcss.com"><\/script>',
             isStreaming: false,
             userInput: "",
             inputImages: [], // queued images for next user message
@@ -1113,6 +1183,74 @@ After creating or editing, confirm the action in a brief chat message.
             },
 
             // ===== Rendering & isolation =====
+            // ===== History & Viewport =====
+            pushHistory(d) {
+              if (!d.history) {
+                this.$set(d, 'history', []);
+                this.$set(d, 'historyIndex', -1);
+              }
+              // If we are not at the end, truncate future
+              if (d.historyIndex < d.history.length - 1) {
+                d.history = d.history.slice(0, d.historyIndex + 1);
+              }
+              d.history.push(d.html);
+              d.historyIndex = d.history.length - 1;
+            },
+            undo(id) {
+              const d = this.getDesign(id);
+              if (!d || !d.history || d.historyIndex <= 0) return;
+              d.historyIndex--;
+              d.html = d.history[d.historyIndex];
+              this.renderDesign(d);
+            },
+            redo(id) {
+              const d = this.getDesign(id);
+              if (!d || !d.history || d.historyIndex >= d.history.length - 1) return;
+              d.historyIndex++;
+              d.html = d.history[d.historyIndex];
+              this.renderDesign(d);
+            },
+            setViewport(id, width) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              d.width = width;
+              // Trigger resize logic if needed, or just let Vue binding handle it
+            },
+            toggleCodeView(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              this.$set(d, 'showCode', !d.showCode);
+              if (d.showCode) {
+                this.$set(d, 'editHtml', d.html);
+              }
+            },
+            applyCodeEdit(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              if (d.editHtml !== d.html) {
+                d.html = d.editHtml;
+                this.pushHistory(d);
+                this.renderDesign(d);
+              }
+              d.showCode = false;
+            },
+            duplicateDesign(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              const newD = JSON.parse(JSON.stringify(d));
+              newD.id = uid();
+              newD.name = d.name + " (Copy)";
+              newD.x += 20;
+              newD.y += 20;
+              newD.z = Math.max(0, ...this.designs.map(x => x.z || 0)) + 1;
+              // Reset history for copy
+              newD.history = [newD.html];
+              newD.historyIndex = 0;
+              this.designs.push(newD);
+              this.$nextTick(() => this.renderDesign(newD));
+            },
+
+            // ===== Render Logic =====
             sanitize(html) {
               return DOMPurify.sanitize(html, {
                 USE_PROFILES: { html: true },
@@ -1130,6 +1268,10 @@ After creating or editing, confirm the action in a brief chat message.
               // Choose renderer
               const mode =
                 design.renderMode || this.renderModeDefault || "shadow";
+              
+              // Prepend global head HTML
+              const fullHtml = (this.globalHeadHtml || "") + sanitized;
+
               if (mode === "iframe") {
                 // sandboxed iframe (we control only from parent)
                 el.innerHTML = "";
@@ -1142,7 +1284,7 @@ After creating or editing, confirm the action in a brief chat message.
                 const html = `
 <!doctype html><html><head><meta charset="utf-8">
 <style>html,body{height:100%;margin:0;background:#0b1220;color:#e5e7eb}</style>
-</head><body>${sanitized}</body></html>`;
+</head><body>${fullHtml}</body></html>`;
                 ifr.srcdoc = html;
                 el.appendChild(ifr);
                 design._renderer = { mode: "iframe", node: ifr };
@@ -1151,7 +1293,7 @@ After creating or editing, confirm the action in a brief chat message.
 
               // Shadow DOM (open so we can update it)
               if (!el.shadowRoot) el.attachShadow({ mode: "open" });
-              el.shadowRoot.innerHTML = sanitized;
+              el.shadowRoot.innerHTML = fullHtml;
               design._renderer = { mode: "shadow", node: el.shadowRoot };
             },
             ensurePreviewBox() {
@@ -1184,6 +1326,7 @@ After creating or editing, confirm the action in a brief chat message.
               d.updatedAt = Date.now();
               // remember latest preview html for commit fallback
               this.previewLastHtml = html;
+              this.pushHistory(d); // Track preview history too? Maybe too noisy. Let's track it.
               this.$nextTick(() => this.renderDesign(d));
             },
             clearPreview() {
@@ -1978,6 +2121,11 @@ After creating or editing, confirm the action in a brief chat message.
             },
             renderModeDefault() {
               this.persistRenderModeDefault();
+            },
+            globalHeadHtml() {
+              localStorage.setItem("mini-stitch:globalHeadHtml", this.globalHeadHtml);
+              // Re-render all designs to apply changes
+              this.designs.forEach(d => this.renderDesign(d));
             },
             messages: {
               handler() {
