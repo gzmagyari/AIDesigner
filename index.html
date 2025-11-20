@@ -294,6 +294,36 @@
         padding-left: 20px;
       }
 
+      /* Typing Indicator */
+      .typing-indicator {
+        display: flex;
+        gap: 4px;
+        padding: 8px 0;
+      }
+      .typing-indicator span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-dim);
+        animation: typing 1.4s infinite;
+      }
+      .typing-indicator span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      .typing-indicator span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+      @keyframes typing {
+        0%, 60%, 100% {
+          opacity: 0.3;
+          transform: translateY(0);
+        }
+        30% {
+          opacity: 1;
+          transform: translateY(-8px);
+        }
+      }
+
       /* Input Area */
       .input {
         padding: 16px;
@@ -821,6 +851,12 @@
             <div class="role">assistant · streaming</div>
             <div v-html="displayStreamingText"></div>
           </div>
+          <div v-if="isStreamingTools && !assistantStreamingText" class="bubble assistant">
+            <div class="role">assistant · calling tools</div>
+            <div class="typing-indicator">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
         </div>
 
         <div class="input">
@@ -1107,7 +1143,9 @@ After creating or editing, confirm the action in a brief chat message.
             editingMessageId: null,
             editContent: "",
             // History UI
-            showingHistoryDesignId: null
+            showingHistoryDesignId: null,
+            // Tool call indicator
+            isStreamingTools: false
           }),
           created() {
             // initial system prompt
@@ -1276,6 +1314,14 @@ After creating or editing, confirm the action in a brief chat message.
               if (!el) return;
               el.style.height = "auto";
               el.style.height = el.scrollHeight + "px";
+            },
+            scrollToBottom() {
+              this.$nextTick(() => {
+                const chat = this.$refs.chatScroll;
+                if (chat) {
+                  chat.scrollTop = chat.scrollHeight;
+                }
+              });
             },
             handleEnter(e) {
               if (e.shiftKey) return;
@@ -1805,9 +1851,11 @@ After creating or editing, confirm the action in a brief chat message.
                   console.warn("Max tool rounds reached; aborting turn.");
                   break;
                 }
+                this.isStreamingTools = true; // Show typing indicator
                 const result = await this.streamOnce({
                   toolChoice: requireToolThisTurn ? "required" : "auto"
                 });
+                this.isStreamingTools = false; // Hide typing indicator
 
                 if (result.toolCalls && result.toolCalls.length) {
                   let mutationSucceeded = false;
@@ -2387,8 +2435,15 @@ After creating or editing, confirm the action in a brief chat message.
             messages: {
               handler() {
                 this.saveState();
+                this.scrollToBottom();
               },
               deep: true
+            },
+            assistantStreamingText() {
+              this.scrollToBottom();
+            },
+            isStreamingTools() {
+              this.scrollToBottom();
             },
             designs: {
               handler() {
