@@ -117,29 +117,25 @@
 
       /* Settings Modal */
       .settings-modal {
-        position: absolute;
-        top: 50px;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 20;
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        padding-top: 20px;
-      }
-
-      .settings-backdrop {
-        position: absolute;
+        position: fixed;
         inset: 0;
-        background: rgba(0,0,0,0.5);
-        backdrop-filter: blur(2px);
-        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
       }
-
+      
+      .settings-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10001;
+        cursor: pointer;
+      }
+      
       .settings-content {
         position: relative;
-        z-index: 2;
+        z-index: 10002;
         background: #18181b;
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -620,6 +616,62 @@
         justify-content: flex-end;
       }
 
+      .edit-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .history-list {
+        max-height: 300px;
+        overflow-y: auto;
+        margin: 10px 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      .history-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .history-item:last-child { border-bottom: none; }
+      .history-item.active {
+        background: rgba(59, 130, 246, 0.1);
+      }
+      .history-item .meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .badge {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+      .badge.ai { background: #3b82f6; color: white; }
+      .badge.manual { background: #f59e0b; color: black; }
+      .badge.revert { background: #10b981; color: white; }
+      .time {
+        font-size: 11px;
+        color: var(--text-dim);
+      }
+      .current-label {
+        font-size: 11px;
+        color: var(--text-dim);
+        font-style: italic;
+      }
+      .empty-history {
+        padding: 20px;
+        text-align: center;
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+
       .resizer {
         position: absolute;
         right: 0;
@@ -688,6 +740,33 @@
             <button class="btn primary full" @click="showSettings = false">Done</button>
           </div>
           <div class="settings-backdrop" @click="showSettings = false"></div>
+        </div>
+
+        <!-- History Modal -->
+        <div class="settings-modal" v-if="showingHistoryDesignId">
+          <div class="settings-content history-content">
+            <h3>History: {{ getDesign(showingHistoryDesignId)?.name }}</h3>
+            <div class="history-list">
+               <div v-for="(entry, idx) in getDesign(showingHistoryDesignId)?.history" 
+                    :key="idx" 
+                    class="history-item"
+                    :class="{active: idx === getDesign(showingHistoryDesignId).historyIndex}">
+                  <div class="meta">
+                    <span class="badge" :class="entry.source || 'ai'">{{ entry.source || 'ai' }}</span>
+                    <span class="time">{{ formatTime(entry.timestamp) }}</span>
+                  </div>
+                  <div class="actions">
+                    <button class="btn small" @click="revertToVersion(showingHistoryDesignId, idx)" v-if="idx !== getDesign(showingHistoryDesignId).historyIndex">Revert</button>
+                    <span v-else class="current-label">Current</span>
+                  </div>
+               </div>
+               <div v-if="!getDesign(showingHistoryDesignId)?.history?.length" class="empty-history">
+                 No history yet.
+               </div>
+            </div>
+            <button class="btn primary full" @click="showingHistoryDesignId = null">Close</button>
+          </div>
+          <div class="settings-backdrop" @click="showingHistoryDesignId = null"></div>
         </div>
 
         <div class="chat" ref="chatScroll">
@@ -822,6 +901,8 @@
               <span class="actions left">
                  <button title="Undo" @click.stop="undo(d.id)" :disabled="!d.history || d.historyIndex <= 0">↶</button>
                  <button title="Redo" @click.stop="redo(d.id)" :disabled="!d.history || d.historyIndex >= (d.history.length - 1)">↷</button>
+                 <span class="sep"></span>
+                 <button title="History" @click.stop="showingHistoryDesignId = d.id">🕒</button>
                  <span class="sep"></span>
                  <button title="Mobile (375px)" @click.stop="setViewport(d.id, 375)">📱</button>
                  <button title="Tablet (768px)" @click.stop="setViewport(d.id, 768)">💊</button>
@@ -1024,7 +1105,9 @@ After creating or editing, confirm the action in a brief chat message.
             lastActiveDesignId: null,
             // Message editing
             editingMessageId: null,
-            editContent: ""
+            editContent: "",
+            // History UI
+            showingHistoryDesignId: null
           }),
           created() {
             // initial system prompt
@@ -1090,6 +1173,84 @@ After creating or editing, confirm the action in a brief chat message.
                 this.clearPreview();
                 this._abortController = null;
               }
+            },
+
+            // ===== History & Viewport =====
+            pushHistory(d, source = 'ai') {
+              if (!d.history) {
+                this.$set(d, 'history', []);
+                this.$set(d, 'historyIndex', -1);
+              }
+              // If we are not at the end, truncate future
+              if (d.historyIndex < d.history.length - 1) {
+                d.history = d.history.slice(0, d.historyIndex + 1);
+              }
+              
+              // Store object with metadata
+              const entry = {
+                html: d.html,
+                timestamp: Date.now(),
+                source: source
+              };
+              
+              d.history.push(entry);
+              d.historyIndex = d.history.length - 1;
+            },
+            undo(id) {
+              const d = this.getDesign(id);
+              if (!d || !d.history || d.historyIndex <= 0) return;
+              d.historyIndex--;
+              const entry = d.history[d.historyIndex];
+              d.html = typeof entry === 'string' ? entry : entry.html;
+              this.renderDesign(d);
+            },
+            redo(id) {
+              const d = this.getDesign(id);
+              if (!d || !d.history || d.historyIndex >= d.history.length - 1) return;
+              d.historyIndex++;
+              const entry = d.history[d.historyIndex];
+              d.html = typeof entry === 'string' ? entry : entry.html;
+              this.renderDesign(d);
+            },
+            revertToVersion(id, index) {
+               const d = this.getDesign(id);
+               if (!d || !d.history || index < 0 || index >= d.history.length) return;
+               
+               const entry = d.history[index];
+               const html = typeof entry === 'string' ? entry : entry.html;
+               
+               d.html = html;
+               this.pushHistory(d, 'revert');
+               this.renderDesign(d);
+               this.showingHistoryDesignId = null; // Close modal
+            },
+            formatTime(ts) {
+              if (!ts) return "";
+              const date = new Date(ts);
+              return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
+            setViewport(id, width) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              d.width = width;
+            },
+            toggleCodeView(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              this.$set(d, 'showCode', !d.showCode);
+              if (d.showCode) {
+                this.$set(d, 'editHtml', d.html);
+              }
+            },
+            applyCodeEdit(id) {
+              const d = this.getDesign(id);
+              if (!d) return;
+              if (d.editHtml !== d.html) {
+                d.html = d.editHtml;
+                this.pushHistory(d, 'manual');
+                this.renderDesign(d);
+              }
+              d.showCode = false;
             },
 
             startResize() {
@@ -1306,41 +1467,6 @@ After creating or editing, confirm the action in a brief chat message.
                 content: JSON.stringify(list, null, 2)
               });
             },
-
-            // ===== Rendering & isolation =====
-            // ===== History & Viewport =====
-            pushHistory(d) {
-              if (!d.history) {
-                this.$set(d, 'history', []);
-                this.$set(d, 'historyIndex', -1);
-              }
-              // If we are not at the end, truncate future
-              if (d.historyIndex < d.history.length - 1) {
-                d.history = d.history.slice(0, d.historyIndex + 1);
-              }
-              d.history.push(d.html);
-              d.historyIndex = d.history.length - 1;
-            },
-            undo(id) {
-              const d = this.getDesign(id);
-              if (!d || !d.history || d.historyIndex <= 0) return;
-              d.historyIndex--;
-              d.html = d.history[d.historyIndex];
-              this.renderDesign(d);
-            },
-            redo(id) {
-              const d = this.getDesign(id);
-              if (!d || !d.history || d.historyIndex >= d.history.length - 1) return;
-              d.historyIndex++;
-              d.html = d.history[d.historyIndex];
-              this.renderDesign(d);
-            },
-            setViewport(id, width) {
-              const d = this.getDesign(id);
-              if (!d) return;
-              d.width = width;
-              // Trigger resize logic if needed, or just let Vue binding handle it
-            },
             toggleCodeView(id) {
               const d = this.getDesign(id);
               if (!d) return;
@@ -1354,7 +1480,7 @@ After creating or editing, confirm the action in a brief chat message.
               if (!d) return;
               if (d.editHtml !== d.html) {
                 d.html = d.editHtml;
-                this.pushHistory(d);
+                this.pushHistory(d, 'manual');
                 this.renderDesign(d);
               }
               d.showCode = false;
@@ -1451,7 +1577,7 @@ After creating or editing, confirm the action in a brief chat message.
               d.updatedAt = Date.now();
               // remember latest preview html for commit fallback
               this.previewLastHtml = html;
-              this.pushHistory(d); // Track preview history too? Maybe too noisy. Let's track it.
+              // Don't track preview history - too noisy
               this.$nextTick(() => this.renderDesign(d));
             },
             clearPreview() {
@@ -2063,7 +2189,10 @@ After creating or editing, confirm the action in a brief chat message.
                 this.designs.length
               );
               console.log("[CREATE_DESIGN] Calling renderDesign...");
-              this.$nextTick(() => this.renderDesign(d));
+              this.$nextTick(() => {
+                this.pushHistory(d, 'ai');
+                this.renderDesign(d);
+              });
               this.previewLastHtml = "";
               this.lastActiveDesignId = d.id;
               console.log("[CREATE_DESIGN] Returning success:", {
@@ -2091,7 +2220,10 @@ After creating or editing, confirm the action in a brief chat message.
               if (typeof args.new_html === "string" && args.new_html.trim()) {
                 d.html = args.new_html;
                 d.updatedAt = Date.now();
-                this.$nextTick(() => this.renderDesign(d));
+                this.$nextTick(() => {
+                   this.pushHistory(d, 'ai');
+                   this.renderDesign(d);
+                });
                 this.lastActiveDesignId = d.id;
                 return { id: d.id, status: "updated" };
               }
