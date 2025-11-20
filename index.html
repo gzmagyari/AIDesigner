@@ -5,198 +5,499 @@
     <title>Mini Stitch – AI Design Canvas (Vue2 + OpenAI)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-      [v-cloak] {
-        display: none;
-      }
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+      [v-cloak] { display: none; }
+
       :root {
-        --bg: #0b1220;
-        --panel: #0f172a;
-        --panel-2: #0b1220;
-        --border: #1f2937;
-        --text: #e5e7eb;
-        --muted: #9ca3af;
-        --accent: #60a5fa;
-        --white: #ffffff;
+        color-scheme: dark; /* CRITICAL: Tells browser to render form controls in dark mode */
+        --bg: #000000;
+        --panel: #0c0c0c;
+        --panel-header: #111111;
+        --border: #2b2b2b;
+        --text: #eeeeee;
+        --text-dim: #a1a1aa;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --input-bg: #18181b;
+        --bubble-user: #18181b;
+        --bubble-assistant: transparent;
+        --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
-      * {
-        box-sizing: border-box;
+
+      /* ... (rest of styles) ... */
+
+      .model-selector select {
+        appearance: none;
+        -webkit-appearance: none;
+        background-color: #18181b; /* Explicit dark background */
+        border: 1px solid var(--border);
+        color: #eeeeee;
+        font-size: 11px;
+        font-weight: 500;
+        font-family: var(--font-sans);
+        cursor: pointer;
+        outline: none;
+        padding: 6px 24px 6px 8px;
+        border-radius: 6px;
+        transition: all 0.2s;
       }
-      html,
-      body {
-        height: 100%;
-      }
+
+      * { box-sizing: border-box; }
+      
+      html, body { height: 100%; }
+      
       body {
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
-          Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        font-family: var(--font-sans);
+        font-size: 13px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
       }
-      a {
-        color: var(--accent);
-        text-decoration: none;
-      }
+
+      a { color: var(--accent); text-decoration: none; }
+      
       .app {
         display: grid;
-        grid-template-columns: 360px 1fr;
+        grid-template-columns: 450px 1fr;
         height: 100vh;
       }
+
+      /* --- Sidebar (Left) --- */
       .left {
         display: grid;
         grid-template-rows: auto 1fr auto;
         border-right: 1px solid var(--border);
         background: var(--panel);
         overflow: hidden;
+        position: relative;
       }
-      .toolbar {
-        padding: 12px;
+
+      /* Header */
+      .header {
+        padding: 12px 16px;
         border-bottom: 1px solid var(--border);
-        display: grid;
-        gap: 8px;
+        background: var(--panel-header);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 50px;
       }
-      .toolbar .row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 8px;
+
+      .header .title {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text);
       }
-      .toolbar input,
-      .toolbar select,
-      .toolbar textarea {
+
+      .header .actions {
+        display: flex;
+        gap: 4px;
+      }
+
+      .btn-icon {
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        padding: 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+      }
+
+      .btn-icon:hover {
+        color: var(--text);
+        background: rgba(255,255,255,0.1);
+      }
+
+      /* Settings Modal */
+      .settings-modal {
+        position: absolute;
+        top: 50px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 20;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding-top: 20px;
+      }
+
+      .settings-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        backdrop-filter: blur(2px);
+        z-index: 1;
+      }
+
+      .settings-content {
+        position: relative;
+        z-index: 2;
+        background: #18181b;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px;
+        width: 300px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .settings-content h3 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .settings-content label {
+        display: block;
+      }
+
+      .settings-content small {
+        display: block;
+        color: var(--text-dim);
+        margin-bottom: 6px;
+        font-size: 11px;
+        text-transform: uppercase;
+        font-weight: 500;
+      }
+
+      .settings-content input,
+      .settings-content select {
         width: 100%;
         padding: 8px 10px;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: #0b1220;
+        border-radius: 6px;
+        background: #000;
         color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 12px;
         outline: none;
       }
-      .toolbar small {
-        color: var(--muted);
-        display: block;
+
+      .settings-content input:focus,
+      .settings-content select:focus {
+        border-color: var(--accent);
       }
-      .toolbar .buttons {
-        display: flex;
-        gap: 8px;
-      }
+
+      /* Buttons */
       .btn {
-        background: #111827;
+        background: var(--input-bg);
         color: var(--text);
         border: 1px solid var(--border);
-        padding: 8px 10px;
-        border-radius: 8px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 500;
         cursor: pointer;
+        transition: all 0.2s;
       }
+
+      .btn:hover {
+        background: #27272a;
+        border-color: #3f3f46;
+      }
+
       .btn.primary {
-        background: #1d4ed8;
-        border-color: #1d4ed8;
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
       }
-      .btn.ghost {
-        background: transparent;
+
+      .btn.primary:hover {
+        background: var(--accent-hover);
       }
+      
+      .btn.full { width: 100%; }
+
       .btn:disabled {
-        opacity: 0.6;
+        opacity: 0.5;
         cursor: not-allowed;
       }
+
+      /* Chat Area */
       .chat {
         overflow-y: auto;
         overflow-x: hidden;
-        padding: 12px;
-        min-height: 0;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
+
       .bubble {
-        padding: 10px 12px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .bubble.user {
+        background: var(--bubble-user);
+        padding: 12px 16px;
+        border-radius: 8px;
         border: 1px solid var(--border);
-        border-radius: 10px;
-        margin-bottom: 10px;
-        background: #0b1220;
-        white-space: pre-wrap;
       }
+
       .bubble.assistant {
-        background: #0f172a;
+        padding-left: 4px;
       }
-      .bubble.tool {
-        background: #0a1717;
-        color: #9fe8e0;
-      }
+
       .role {
-        font-size: 12px;
-        color: var(--muted);
-        margin-bottom: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-dim);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
       }
-      .input {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 8px;
+
+      /* Markdown Styles */
+      .bubble p { margin: 0 0 8px 0; }
+      .bubble p:last-child { margin-bottom: 0; }
+      
+      .bubble pre {
+        background: #18181b;
+        border: 1px solid var(--border);
         padding: 12px;
+        border-radius: 6px;
+        overflow-x: auto;
+        margin: 8px 0;
+        font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+        font-size: 12px;
+      }
+      
+      .bubble code {
+        font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+        background: rgba(255,255,255,0.1);
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      
+      .bubble pre code {
+        background: transparent;
+        padding: 0;
+        color: #e5e7eb;
+      }
+
+      .bubble ul, .bubble ol {
+        margin: 8px 0;
+        padding-left: 20px;
+      }
+
+      /* Input Area */
+      .input {
+        padding: 16px;
         border-top: 1px solid var(--border);
         background: var(--panel);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
-      .input input {
-        padding: 10px;
+
+      .input textarea {
+        width: 100%;
+        padding: 12px;
         border: 1px solid var(--border);
-        border-radius: 10px;
-        background: #0b1220;
+        border-radius: 8px;
+        background: var(--input-bg);
         color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 13px;
+        outline: none;
+        transition: border-color 0.2s;
+        resize: none;
+        min-height: 44px;
+        max-height: 200px;
+        overflow-y: hidden;
       }
+
+      .input textarea:focus {
+        border-color: var(--accent);
+      }
+
+      .input-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      
+      .model-selector {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      
+      .model-selector select {
+        appearance: none;
+        -webkit-appearance: none;
+        background-color: #18181b;
+        border: 1px solid var(--border);
+        color: #eeeeee;
+        font-size: 11px;
+        font-weight: 500;
+        font-family: var(--font-sans);
+        cursor: pointer;
+        outline: none;
+        padding: 6px 24px 6px 8px;
+        border-radius: 6px;
+        transition: all 0.2s;
+      }
+      
+      .model-selector select:hover {
+        color: var(--text);
+        background-color: rgba(255,255,255,0.05);
+      }
+
+      .model-selector select option {
+        background-color: #18181b;
+        color: var(--text);
+        padding: 8px;
+      }
+
+      /* Custom arrow */
+      .model-selector::after {
+        content: '';
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        margin-top: -1px;
+        width: 0; 
+        height: 0; 
+        border-left: 3px solid transparent;
+        border-right: 3px solid transparent;
+        border-top: 4px solid var(--text-dim);
+        pointer-events: none;
+      }
+
+      .model-selector:hover::after {
+        border-top-color: var(--text);
+      }
+
+      /* Attachments */
+      .attachments {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      
+      .thumb {
+        position: relative;
+        width: 48px;
+        height: 48px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        overflow: hidden;
+        background: #000;
+      }
+      
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      
+      .thumb .remove {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        cursor: pointer;
+      }
+      .input .attachments { grid-column: 1 / -1; }
+
+      /* --- Canvas (Right) --- */
       .right {
         position: relative;
-        background: radial-gradient(
-          1200px 600px at 30% -10%,
-          rgba(96, 165, 250, 0.15),
-          transparent 60%
-        );
+        background: #000; /* Deep black for canvas bg */
+        background-image: 
+          radial-gradient(circle at 50% 50%, #111 1px, transparent 1px);
+        background-size: 24px 24px; /* Dot pattern */
       }
+
       .canvas {
         position: absolute;
         inset: 0;
         overflow: auto;
-        padding: 24px;
+        padding: 40px;
       }
+
       .box {
         position: absolute;
-        background: #0b1220;
+        background: #000;
         border: 1px solid var(--border);
-        border-radius: 12px;
-        box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
         overflow: hidden;
-        user-select: none;
+        display: flex;
+        flex-direction: column;
       }
+
       .box-toolbar {
-        height: 34px;
+        height: 32px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 0 10px;
-        background: #0f172a;
+        background: var(--panel-header);
         border-bottom: 1px solid var(--border);
-        font-size: 12px;
+        font-size: 11px;
+        color: var(--text-dim);
       }
+
       .box-toolbar .title {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-weight: 500;
       }
-      .box-toolbar .actions button {
+
+      .box-toolbar button {
         background: transparent;
-        border: 1px solid var(--border);
-        color: var(--text);
-        border-radius: 6px;
-        padding: 4px 6px;
-        margin-left: 6px;
+        border: none;
+        color: var(--text-dim);
         cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
       }
-      .box-toolbar .actions button:hover {
-        border-color: #2b3647;
+
+      .box-toolbar button:hover {
+        color: var(--text);
+        background: rgba(255,255,255,0.1);
       }
+
       .box-content {
-        position: absolute;
-        inset: 34px 0 0 0;
-        background: #0b1220;
+        position: relative;
+        flex: 1;
+        background: #fff; /* Content inside box is usually light unless specified otherwise */
         overflow: auto;
       }
+      
       .box.preview {
-        border-style: dashed;
+        border: 1px dashed var(--accent);
+        opacity: 0.8;
       }
+      
       .box.fullscreen {
         position: absolute !important;
         inset: 24px !important;
@@ -208,95 +509,75 @@
         height: auto !important;
         z-index: 9999 !important;
       }
+
       .empty {
         position: absolute;
         inset: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #94a3b8;
-        font-size: 14px;
-        text-align: center;
-        padding: 20px;
+        color: var(--text-dim);
       }
-      .hint {
-        color: #9ca3af;
-        font-size: 12px;
-      }
-      .pill {
-        padding: 2px 8px;
-        border-radius: 99px;
-        border: 1px solid var(--border);
-        color: var(--muted);
-      }
-
-      /* Attachments (used in chat bubbles and composer) */
-      .attachments {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
+      
+      .empty .hint {
+        font-size: 13px;
         margin-top: 8px;
       }
-      .thumb {
-        position: relative;
-        width: 64px;
-        height: 64px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        overflow: hidden;
-        background: #0b1220;
-      }
-      .thumb img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
-      }
-      .thumb .remove {
+
+      .resizer {
         position: absolute;
-        top: -6px;
-        right: -6px;
-        width: 20px;
-        height: 20px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: #111827;
-        color: var(--text);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 6px;
+        cursor: col-resize;
+        z-index: 100;
+        background: transparent;
+        transition: background 0.2s;
       }
-      .input .attachments { grid-column: 1 / -1; }
+      .resizer:hover, .resizer.active {
+        background: rgba(59, 130, 246, 0.5); /* accent with opacity */
+      }
     </style>
 
     <!-- CDN libs -->
     <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   </head>
   <body>
-    <div id="app" class="app" v-cloak>
+    <div id="app" class="app" :style="{ gridTemplateColumns: sidebarWidth + 'px 1fr' }" v-cloak>
       <!-- LEFT: Controls & Chat -->
       <section class="left">
-        <div class="toolbar">
-          <div class="row">
+        <div class="resizer" @mousedown="startResize" :class="{ active: isResizing }"></div>
+        <!-- Header -->
+        <div class="header">
+          <div class="title">AI Designer</div>
+          <div class="actions">
+            <button class="btn-icon" @click="clearChat()" title="Clear chat">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+            <button class="btn-icon" @click="newCanvas()" title="New canvas">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+            </button>
+            <button class="btn-icon" @click="listDesignsToChat()" title="List designs">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            </button>
+            <button class="btn-icon" @click="showSettings = !showSettings" title="Settings">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div class="settings-modal" v-if="showSettings">
+          <div class="settings-content">
+            <h3>Settings</h3>
             <label>
-              <small>OpenAI API key (stored locally, dev only)</small>
-              <input
-                v-model.trim="apiKey"
-                @change="persistApiKey"
-                placeholder="sk-..."
-              />
-            </label>
-            <label>
-              <small>Model (supports tool calls + streaming)</small>
-              <input v-model.trim="model" list="model-suggestions" />
-              <datalist id="model-suggestions">
-                <option>gpt-4o-mini</option>
-                <option>gpt-4o</option>
-                <option>gpt-4.1-mini</option>
-              </datalist>
+              <small>OpenAI API Key</small>
+              <input v-model.trim="apiKey" @change="persistApiKey" placeholder="sk-..." type="password" />
             </label>
             <label>
               <small>Renderer</small>
@@ -305,18 +586,9 @@
                 <option value="iframe">Sandboxed iframe (fallback)</option>
               </select>
             </label>
+            <button class="btn primary full" @click="showSettings = false">Done</button>
           </div>
-          <div class="buttons">
-            <button class="btn ghost" @click="clearChat()">Clear chat</button>
-            <button class="btn ghost" @click="newCanvas()">New canvas</button>
-            <button class="btn ghost" @click="listDesignsToChat()">
-              List designs
-            </button>
-          </div>
-          <small class="hint"
-            >Tip: Ask “Create a hero section card with a headline + CTA”. Then
-            try “Replace ‘Get Started’ with ‘Try it free’ in Hero”.</small
-          >
+          <div class="settings-backdrop" @click="showSettings = false"></div>
         </div>
 
         <div class="chat" ref="chatScroll">
@@ -330,8 +602,7 @@
               <div class="role">
                 {{ msg.role }} <span v-if="msg.name">· {{ msg.name }}</span>
               </div>
-              <div>{{ displayContent(msg) }}</div>
-              <!-- Show image attachments inside the bubble when present -->
+              <div v-html="displayContent(msg)"></div>
               <div v-if="msg.images && msg.images.length" class="attachments">
                 <div
                   class="thumb"
@@ -342,12 +613,11 @@
           </template>
           <div v-if="assistantStreamingText" class="bubble assistant">
             <div class="role">assistant · streaming</div>
-            <div>{{ displayStreamingText }}</div>
+            <div v-html="displayStreamingText"></div>
           </div>
         </div>
 
         <div class="input">
-          <!-- Pasted image thumbnails (composer) -->
           <div
             class="attachments"
             v-if="inputImages.length"
@@ -358,26 +628,44 @@
               <button class="remove" @click="removeInputImage(img.id)" title="Remove">✕</button>
             </div>
           </div>
-          <input
+          <textarea
+            ref="input"
             v-model="userInput"
             :disabled="isStreaming"
-            @keydown.enter="send"
+            @keydown.enter="handleEnter"
+            @input="adjustHeight"
             @paste="onPaste"
             placeholder="Describe a design or paste an image (Ctrl/Cmd+V)…"
-          />
-          <div style="display: flex; gap: 8px">
-            <button class="btn" @click="stop" :disabled="!isStreaming">
-              Stop
-            </button>
-            <button
-              class="btn primary"
-              @click="send"
-              :disabled="!apiKey || (!userInput && !inputImages.length) || isStreaming"
-            >
-              Send
-            </button>
+            rows="1"
+          ></textarea>
+          <div class="input-actions">
+            <div class="model-selector">
+              <select v-model="model">
+                <option value="gpt-4.1">gpt-4.1 (Default)</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="gpt-4-turbo">gpt-4-turbo</option>
+                <option value="gpt-4">gpt-4</option>
+                <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                <option value="o1-preview">o1-preview</option>
+                <option value="o1-mini">o1-mini</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 8px">
+              <button class="btn" @click="stop" :disabled="!isStreaming">
+                Stop
+              </button>
+              <button
+                class="btn primary"
+                @click="send"
+                :disabled="!apiKey || (!userInput && !inputImages.length) || isStreaming"
+              >
+                Send
+              </button>
+            </div>
           </div>
         </div>
+
       </section>
 
       <!-- RIGHT: Canvas -->
@@ -564,8 +852,11 @@ After creating or editing, confirm the action in a brief chat message.
         new Vue({
           el: "#app",
           data: () => ({
+            sidebarWidth: 450,
+            isResizing: false,
+            showSettings: false,
             apiKey: localStorage.getItem("mini-stitch:apiKey") || "",
-            model: localStorage.getItem("mini-stitch:model") || "gpt-4o-mini",
+            model: localStorage.getItem("mini-stitch:model") || "gpt-4.1",
             renderModeDefault:
               localStorage.getItem("mini-stitch:renderModeDefault") || "shadow",
             isStreaming: false,
@@ -589,6 +880,14 @@ After creating or editing, confirm the action in a brief chat message.
             this.ensureSystemPrompt();
             // restore saved state
             this.restoreState();
+            
+            // Global resize listeners
+            window.addEventListener('mousemove', this.doResize);
+            window.addEventListener('mouseup', this.stopResize);
+          },
+          destroyed() {
+            window.removeEventListener('mousemove', this.doResize);
+            window.removeEventListener('mouseup', this.stopResize);
           },
           mounted() {
             this.$watch(
@@ -598,20 +897,54 @@ After creating or editing, confirm the action in a brief chat message.
             );
           },
           methods: {
+            startResize() {
+              this.isResizing = true;
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+            },
+            doResize(e) {
+              if (!this.isResizing) return;
+              // Constrain width
+              const w = Math.max(300, Math.min(e.clientX, window.innerWidth - 300));
+              this.sidebarWidth = w;
+            },
+            stopResize() {
+              if (this.isResizing) {
+                this.isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+              }
+            },
+            adjustHeight() {
+              const el = this.$refs.input;
+              if (!el) return;
+              el.style.height = "auto";
+              el.style.height = el.scrollHeight + "px";
+            },
+            handleEnter(e) {
+              if (e.shiftKey) return;
+              e.preventDefault();
+              this.send();
+            },
+            renderMarkdown(text) {
+              if (!text) return "";
+              if (typeof marked === "undefined") return text;
+              return DOMPurify.sanitize(marked.parse(text));
+            },
             displayContent(msg) {
               // For messages with content, display it
               if (msg.content && msg.content.trim()) {
-                return msg.content;
+                return this.renderMarkdown(msg.content);
               }
               // For tool-only messages (e.g., assistant with only tool_calls), show indicator
               if (msg.tool_calls && msg.tool_calls.length > 0) {
                 const toolNames = msg.tool_calls
                   .map(tc => tc.function?.name || "unknown")
                   .join(", ");
-                return `[Calling tools: ${toolNames}]`;
+                return `<em style="color:var(--muted)">Calling tools: ${toolNames}...</em>`;
               }
               // Empty message
-              return msg.content || "";
+              return "";
             },
 
             ensureSystemPrompt() {
@@ -1047,8 +1380,10 @@ After creating or editing, confirm the action in a brief chat message.
                 this.clearPreview(); // remove any orphan preview when done
                 this._abortController = null;
                 this.$nextTick(() => {
-                  const input = document.querySelector(".input input");
-                  if (input) input.focus();
+                  if (this.$refs.input) {
+                    this.$refs.input.focus();
+                    this.adjustHeight();
+                  }
                 });
               }
             },
@@ -1631,7 +1966,7 @@ After creating or editing, confirm the action in a brief chat message.
           },
           computed: {
             displayStreamingText() {
-              return this.assistantStreamingText || "";
+              return this.renderMarkdown(this.assistantStreamingText || "");
             }
           },
           watch: {
