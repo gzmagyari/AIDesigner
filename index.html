@@ -1566,39 +1566,6 @@ After creating or editing, confirm the action in a brief chat message.
                 content: JSON.stringify(list, null, 2)
               });
             },
-            toggleCodeView(id) {
-              const d = this.getDesign(id);
-              if (!d) return;
-              this.$set(d, 'showCode', !d.showCode);
-              if (d.showCode) {
-                this.$set(d, 'editHtml', d.html);
-              }
-            },
-            applyCodeEdit(id) {
-              const d = this.getDesign(id);
-              if (!d) return;
-              if (d.editHtml !== d.html) {
-                d.html = d.editHtml;
-                this.pushHistory(d, 'manual');
-                this.renderDesign(d);
-              }
-              d.showCode = false;
-            },
-            duplicateDesign(id) {
-              const d = this.getDesign(id);
-              if (!d) return;
-              const newD = JSON.parse(JSON.stringify(d));
-              newD.id = uid();
-              newD.name = d.name + " (Copy)";
-              newD.x += 20;
-              newD.y += 20;
-              newD.z = Math.max(0, ...this.designs.map(x => x.z || 0)) + 1;
-              // Reset history for copy
-              newD.history = [newD.html];
-              newD.historyIndex = 0;
-              this.designs.push(newD);
-              this.$nextTick(() => this.renderDesign(newD));
-            },
 
             // ===== Render Logic =====
             sanitize(html) {
